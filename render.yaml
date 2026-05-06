@@ -1,0 +1,10 @@
+services:
+  - type: web
+    name: simple-dinners-api
+    env: node
+
+    buildCommand: |
+      npm install
+      npx playwright install --with-deps
+
+    startCommand: npm start
