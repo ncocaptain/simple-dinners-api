@@ -105,7 +105,7 @@ async function loadAndExtractRecipe(page, url) {
     timeout: 45000,
   });
 
-  await page.waitForTimeout(6000);
+  await page.waitForTimeout(2500);
 
   const html = await page.content();
   const finalUrl = page.url();
