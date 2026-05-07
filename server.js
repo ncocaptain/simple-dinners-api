@@ -145,12 +145,23 @@ function extractRecipeFromPage($, sourceUrl, finalUrl) {
   let instructions = extractInstructions(recipe?.recipeInstructions);
 
   if (ingredients.length === 0) {
+  if (finalUrl.includes("natashaskitchen.com")) {
+    ingredients = extractNatashaIngredients($);
+  }
+
+  if (ingredients.length === 0) {
     ingredients = extractBySelectors($, [
       "[data-ingredient-name='true']",
       ".mntl-structured-ingredients__list-item",
       ".ingredients-item-name",
       "li[class*='ingredient']",
     ]);
+  }
+}
+
+  if (instructions.length === 0) {
+  if (finalUrl.includes("natashaskitchen.com")) {
+    instructions = extractNatashaInstructions($);
   }
 
   if (instructions.length === 0) {
@@ -166,6 +177,7 @@ function extractRecipeFromPage($, sourceUrl, finalUrl) {
       )
     );
   }
+}
 
   ingredients = ingredients.map(cleanHtmlEntities).map(cleanText).filter(Boolean);
   instructions = instructions.map(cleanHtmlEntities).map(cleanText).filter(Boolean);
@@ -385,6 +397,45 @@ function findAllrecipesRecipeLink($, baseUrl, articleTitle = "") {
   return found;
 }
 
+// =====================================================
+// Natasha's Kitchen fallback parser
+// =====================================================
+
+function extractNatashaIngredients($) {
+  const results = [];
+
+  [
+    ".wprm-recipe-ingredient",
+    ".wprm-recipe-ingredients li",
+    "[class*='wprm-recipe-ingredient']",
+  ].forEach((selector) => {
+    $(selector).each((_, el) => {
+      const text = cleanHtmlEntities(cleanText($(el).text()));
+      if (text && !results.includes(text)) results.push(text);
+    });
+  });
+
+  return results.slice(0, 80);
+}
+
+function extractNatashaInstructions($) {
+  const results = [];
+
+  [
+    ".wprm-recipe-instruction",
+    ".wprm-recipe-instructions li",
+    "[class*='wprm-recipe-instruction']",
+  ].forEach((selector) => {
+    $(selector).each((_, el) => {
+      const text = cleanHtmlEntities(cleanText($(el).text()));
+      if (text && !results.includes(text)) results.push(text);
+    });
+  });
+
+  return results
+    .filter((line) => line.length > 10)
+    .slice(0, 40);
+}
 // =====================================================
 // Text helpers
 // =====================================================
