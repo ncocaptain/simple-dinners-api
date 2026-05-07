@@ -42,24 +42,25 @@ app.post("/import-recipe", async (request, reply) => {
     });
 
     const context = await browser.newContext({
-  userAgent:
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-  viewport: { width: 1365, height: 900 },
-  locale: "en-US",
-  timezoneId: "America/New_York",
-  extraHTTPHeaders: {
-    "Accept-Language": "en-US,en;q=0.9",
-    "Upgrade-Insecure-Requests": "1",
-  },
-});
+      userAgent:
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+      viewport: { width: 1365, height: 900 },
+      locale: "en-US",
+      timezoneId: "America/New_York",
+      extraHTTPHeaders: {
+        "Accept-Language": "en-US,en;q=0.9",
+        "Upgrade-Insecure-Requests": "1",
+      },
+    });
 
     const page = await context.newPage();
 
-    
     const firstResult = await loadAndExtractRecipe(page, url);
 
     const shouldFollowLinkedRecipe =
-      firstResult.linkedRecipeUrl && firstResult.ingredients.length === 0;
+      firstResult.success &&
+      firstResult.linkedRecipeUrl &&
+      firstResult.ingredients.length === 0;
 
     if (shouldFollowLinkedRecipe) {
       const linkedResult = await loadAndExtractRecipe(
@@ -71,10 +72,12 @@ app.post("/import-recipe", async (request, reply) => {
         ...linkedResult,
         sourceUrl: url,
         importedFromUrl: firstResult.linkedRecipeUrl,
-        recipe: {
-          ...linkedResult.recipe,
-          sourceUrl: firstResult.linkedRecipeUrl,
-        },
+        recipe: linkedResult.recipe
+          ? {
+              ...linkedResult.recipe,
+              sourceUrl: firstResult.linkedRecipeUrl,
+            }
+          : null,
         debug: {
           ...linkedResult.debug,
           followedLinkedRecipe: true,
@@ -90,6 +93,7 @@ app.post("/import-recipe", async (request, reply) => {
 
     return reply.code(500).send({
       success: false,
+      successLevel: "error",
       error: error instanceof Error ? error.message : "Import failed",
     });
   } finally {
@@ -117,6 +121,31 @@ async function loadAndExtractRecipe(page, url) {
 }
 
 function extractRecipeFromPage($, sourceUrl, finalUrl) {
+  if (isBlockedPage($)) {
+    const pageTitle = cleanHtmlEntities(cleanText($("title").text()));
+
+    return {
+      success: false,
+      successLevel: "blocked",
+      debugVersion: "simple-dinners-api-importer-v1",
+      sourceUrl,
+      importedFromUrl: finalUrl,
+      name: "",
+      ingredients: [],
+      instructions: [],
+      image: "",
+      linkedRecipeUrl: "",
+      recipe: null,
+      error:
+        "This site blocked the recipe importer. Try another link or add the recipe manually.",
+      debug: {
+        blocked: true,
+        finalUrl,
+        pageTitle,
+      },
+    };
+  }
+
   let recipe = null;
 
   $("script[type='application/ld+json']").each((_, el) => {
@@ -147,39 +176,39 @@ function extractRecipeFromPage($, sourceUrl, finalUrl) {
   let instructions = extractInstructions(recipe?.recipeInstructions);
 
   if (ingredients.length === 0) {
-  if (finalUrl.includes("natashaskitchen.com")) {
-    ingredients = extractNatashaIngredients($);
-  }
+    if (finalUrl.includes("natashaskitchen.com")) {
+      ingredients = extractNatashaIngredients($);
+    }
 
-  if (ingredients.length === 0) {
-    ingredients = extractBySelectors($, [
-      "[data-ingredient-name='true']",
-      ".mntl-structured-ingredients__list-item",
-      ".ingredients-item-name",
-      "li[class*='ingredient']",
-    ]);
-  }
-}
-
-  if (instructions.length === 0) {
-  if (finalUrl.includes("natashaskitchen.com")) {
-    instructions = extractNatashaInstructions($);
+    if (ingredients.length === 0) {
+      ingredients = extractBySelectors($, [
+        "[data-ingredient-name='true']",
+        ".mntl-structured-ingredients__list-item",
+        ".ingredients-item-name",
+        "li[class*='ingredient']",
+      ]);
+    }
   }
 
   if (instructions.length === 0) {
-    instructions = extractBySelectors($, [
-      ".comp.mntl-sc-block.mntl-sc-block-html",
-      ".mntl-sc-block-group--LI",
-      "li[class*='instruction']",
-      "p[class*='instruction']",
-      "div[class*='direction']",
-    ]).filter((line) =>
-      /mix|stir|cook|bake|heat|place|add|whisk|combine|pour|season|serve|remove|transfer|drain|spread|sprinkle|preheat/i.test(
-        line
-      )
-    );
+    if (finalUrl.includes("natashaskitchen.com")) {
+      instructions = extractNatashaInstructions($);
+    }
+
+    if (instructions.length === 0) {
+      instructions = extractBySelectors($, [
+        ".comp.mntl-sc-block.mntl-sc-block-html",
+        ".mntl-sc-block-group--LI",
+        "li[class*='instruction']",
+        "p[class*='instruction']",
+        "div[class*='direction']",
+      ]).filter((line) =>
+        /mix|stir|cook|bake|heat|place|add|whisk|combine|pour|season|serve|remove|transfer|drain|spread|sprinkle|preheat/i.test(
+          line
+        )
+      );
+    }
   }
-}
 
   ingredients = ingredients.map(cleanHtmlEntities).map(cleanText).filter(Boolean);
   instructions = instructions.map(cleanHtmlEntities).map(cleanText).filter(Boolean);
@@ -209,7 +238,6 @@ function extractRecipeFromPage($, sourceUrl, finalUrl) {
     successLevel,
     debugVersion: "simple-dinners-api-importer-v1",
 
-    // Raw API fields for debugging/future use
     sourceUrl,
     importedFromUrl: finalUrl,
     name: recipeName,
@@ -218,7 +246,6 @@ function extractRecipeFromPage($, sourceUrl, finalUrl) {
     image,
     linkedRecipeUrl,
 
-    // Shape expected by Simple Dinners frontend
     recipe: {
       name: recipeName,
       ingredients: hasIngredients ? ingredients.join("\n") : "",
@@ -241,6 +268,28 @@ function extractRecipeFromPage($, sourceUrl, finalUrl) {
       linkedRecipeUrl,
     },
   };
+}
+
+// =====================================================
+// Blocked-site detection
+// Prevents importing bot-check / access denied pages as recipes
+// =====================================================
+
+function isBlockedPage($) {
+  const title = cleanText($("title").text()).toLowerCase();
+  const body = cleanText($("body").text()).toLowerCase();
+
+  return (
+    title.includes("just a moment") ||
+    title.includes("access denied") ||
+    title.includes("access to this page has been denied") ||
+    body.includes("just a moment") ||
+    body.includes("checking your browser") ||
+    body.includes("access to this page has been denied") ||
+    body.includes("please enable cookies") ||
+    body.includes("verify you are human") ||
+    body.includes("attention required")
+  );
 }
 
 // =====================================================
@@ -401,6 +450,7 @@ function findAllrecipesRecipeLink($, baseUrl, articleTitle = "") {
 
 // =====================================================
 // Natasha's Kitchen fallback parser
+// Used if Natasha becomes accessible instead of blocked
 // =====================================================
 
 function extractNatashaIngredients($) {
@@ -434,10 +484,9 @@ function extractNatashaInstructions($) {
     });
   });
 
-  return results
-    .filter((line) => line.length > 10)
-    .slice(0, 40);
+  return results.filter((line) => line.length > 10).slice(0, 40);
 }
+
 // =====================================================
 // Text helpers
 // =====================================================
