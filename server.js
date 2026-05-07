@@ -42,18 +42,20 @@ app.post("/import-recipe", async (request, reply) => {
     });
 
     const context = await browser.newContext({
-      userAgent:
-        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-      viewport: { width: 1365, height: 900 },
-      locale: "en-US",
-    });
+  userAgent:
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+  viewport: { width: 1365, height: 900 },
+  locale: "en-US",
+  timezoneId: "America/New_York",
+  extraHTTPHeaders: {
+    "Accept-Language": "en-US,en;q=0.9",
+    "Upgrade-Insecure-Requests": "1",
+  },
+});
 
     const page = await context.newPage();
 
-    await page.setExtraHTTPHeaders({
-      "Accept-Language": "en-US,en;q=0.9",
-    });
-
+    
     const firstResult = await loadAndExtractRecipe(page, url);
 
     const shouldFollowLinkedRecipe =
@@ -105,7 +107,7 @@ async function loadAndExtractRecipe(page, url) {
     timeout: 45000,
   });
 
-  await page.waitForTimeout(2500);
+  await page.waitForTimeout(4000);
 
   const html = await page.content();
   const finalUrl = page.url();
