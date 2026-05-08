@@ -576,6 +576,18 @@ function cleanHtmlEntities(value) {
     .replace(/&frac12;/gi, "½")
     .replace(/&frac14;/gi, "¼")
     .replace(/&frac34;/gi, "¾")
+    .replace(/&#160;/g, " ")
+.replace(/&#176;/g, "°")
+.replace(/&#188;/g, "¼")
+.replace(/&#189;/g, "½")
+.replace(/&#190;/g, "¾")
+.replace(/&#8217;/g, "'")
+.replace(/&#8216;/g, "'")
+.replace(/&#8220;/g, '"')
+.replace(/&#8221;/g, '"')
+.replace(/&#(\d+);/g, (_, code) => {
+  return String.fromCharCode(Number(code));
+})
     .trim();
 }
 
