@@ -13,6 +13,7 @@ import OpenAI from "openai";
 // =====================================================
 
 const app = Fastify({ logger: true });
+
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
 });
@@ -72,7 +73,7 @@ app.post("/import-recipe", async (request, reply) => {
         firstResult.linkedRecipeUrl
       );
 
-      return {
+      const finalResult = {
         ...linkedResult,
         sourceUrl: url,
         importedFromUrl: firstResult.linkedRecipeUrl,
@@ -89,9 +90,11 @@ app.post("/import-recipe", async (request, reply) => {
           firstPageName: firstResult.name,
         },
       };
+
+      return await applyAiCleanupToResult(finalResult);
     }
 
-    return firstResult;
+    return await applyAiCleanupToResult(firstResult);
   } catch (error) {
     request.log.error(error);
 
@@ -121,10 +124,10 @@ async function loadAndExtractRecipe(page, url) {
   const finalUrl = page.url();
   const $ = cheerio.load(html);
 
-  return await extractRecipeFromPage($, url, finalUrl);
+  return extractRecipeFromPage($, url, finalUrl);
 }
 
-async function extractRecipeFromPage($, sourceUrl, finalUrl) {
+function extractRecipeFromPage($, sourceUrl, finalUrl) {
   if (isBlockedPage($)) {
     const pageTitle = cleanHtmlEntities(cleanText($("title").text()));
 
@@ -230,12 +233,6 @@ async function extractRecipeFromPage($, sourceUrl, finalUrl) {
   const hasIngredients = ingredients.length > 0;
   const hasInstructions = instructions.length > 0;
 
-  const cleanedRecipe = await cleanRecipeWithAI({
-  name: recipeName,
-  ingredients: ingredients.join("\n"),
-  instructions: instructions.join("\n"),
-});
-
   const successLevel =
     hasIngredients && hasInstructions
       ? "full"
@@ -251,19 +248,17 @@ async function extractRecipeFromPage($, sourceUrl, finalUrl) {
     sourceUrl,
     importedFromUrl: finalUrl,
     name: recipeName,
-    ingredients: cleanedRecipe.ingredients,
-instructions: cleanedRecipe.instructions,
+    ingredients,
+    instructions,
     image,
     linkedRecipeUrl,
 
     recipe: {
       name: recipeName,
-      ingredients: hasIngredients
-  ? cleanedRecipe.ingredients.join("\n")
-  : "",
+      ingredients: hasIngredients ? ingredients.join("\n") : "",
       instructions: hasInstructions
-  ? cleanedRecipe.instructions.join("\n")
-  : "Steps available at source link!",
+        ? instructions.join("\n")
+        : "Steps available at source link!",
       photoUrl: image,
       slug: `${slugify(recipeName)}-${Date.now().toString().slice(-4)}`,
       sourceUrl: finalUrl,
@@ -280,6 +275,61 @@ instructions: cleanedRecipe.instructions,
       linkedRecipeUrl,
     },
   };
+}
+
+// =====================================================
+// AI cleanup result wrapper
+// Runs only after final import / linked recipe follow is complete
+// =====================================================
+
+async function applyAiCleanupToResult(result) {
+  if (!result?.success || !result?.recipe) return result;
+
+  const hasIngredients =
+    typeof result.recipe.ingredients === "string" &&
+    result.recipe.ingredients.trim().length > 0;
+
+  const hasInstructions =
+    typeof result.recipe.instructions === "string" &&
+    result.recipe.instructions.trim().length > 0 &&
+    result.recipe.instructions !== "Steps available at source link!";
+
+  if (!hasIngredients && !hasInstructions) return result;
+
+  const cleanedRecipe = await cleanRecipeWithAI(result.recipe);
+
+  const cleanedIngredients = cleanedRecipe.ingredients
+    .map(cleanHtmlEntities)
+    .map(cleanText)
+    .filter(Boolean);
+
+  const cleanedInstructions = cleanedRecipe.instructions
+    .map(cleanHtmlEntities)
+    .map(cleanText)
+    .filter(Boolean);
+
+  if (cleanedIngredients.length > 0) {
+    result.ingredients = cleanedIngredients;
+    result.recipe.ingredients = cleanedIngredients.join("\n");
+  }
+
+  if (cleanedInstructions.length > 0) {
+    result.instructions = cleanedInstructions;
+    result.recipe.instructions = cleanedInstructions.join("\n");
+  }
+
+  result.aiCleanup = {
+    enabled: true,
+    ingredientsCount: cleanedIngredients.length,
+    instructionsCount: cleanedInstructions.length,
+  };
+
+  result.debug = {
+    ...(result.debug || {}),
+    aiCleanupApplied: true,
+  };
+
+  return result;
 }
 
 // =====================================================
@@ -541,6 +591,13 @@ function slugify(text) {
 
 async function cleanRecipeWithAI(recipe) {
   try {
+    if (!process.env.OPENAI_API_KEY) {
+      return {
+        ingredients: recipe.ingredients.split("\n"),
+        instructions: recipe.instructions.split("\n"),
+      };
+    }
+
     const prompt = `
 You are cleaning and standardizing a recipe for a cooking app.
 
@@ -589,7 +646,6 @@ ${recipe.instructions}
     });
 
     const content = response.choices?.[0]?.message?.content || "";
-
     const cleaned = JSON.parse(content);
 
     return {
