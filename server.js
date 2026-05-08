@@ -6,12 +6,16 @@
 import Fastify from "fastify";
 import { chromium } from "playwright";
 import * as cheerio from "cheerio";
+import OpenAI from "openai";
 
 // =====================================================
 // App setup
 // =====================================================
 
 const app = Fastify({ logger: true });
+const openai = new OpenAI({
+  apiKey: process.env.OPENAI_API_KEY,
+});
 
 app.get("/", async () => {
   return {
@@ -520,6 +524,83 @@ function slugify(text) {
     .replace(/[^\w\s-]/g, "")
     .replace(/\s+/g, "-")
     .replace(/-+/g, "-");
+}
+
+// =====================================================
+// AI Recipe Cleanup
+// Cleans imported recipe formatting
+// =====================================================
+
+async function cleanRecipeWithAI(recipe) {
+  try {
+    const prompt = `
+You are cleaning and standardizing a recipe for a cooking app.
+
+RULES:
+- Do NOT invent ingredients.
+- Do NOT invent cooking steps.
+- Keep the recipe faithful to the original.
+- Improve clarity and formatting.
+- Normalize capitalization.
+- Remove duplicate or messy wording.
+- Make instructions easier to follow.
+- Return valid JSON only.
+
+Return format:
+{
+  "ingredients": ["..."],
+  "instructions": ["..."]
+}
+
+Recipe:
+
+Title:
+${recipe.name}
+
+Ingredients:
+${recipe.ingredients}
+
+Instructions:
+${recipe.instructions}
+`;
+
+    const response = await openai.chat.completions.create({
+      model: process.env.OPENAI_MODEL || "gpt-5.5",
+      messages: [
+        {
+          role: "system",
+          content:
+            "You clean and standardize cooking recipes for a meal planning app.",
+        },
+        {
+          role: "user",
+          content: prompt,
+        },
+      ],
+      temperature: 0.2,
+    });
+
+    const content = response.choices?.[0]?.message?.content || "";
+
+    const cleaned = JSON.parse(content);
+
+    return {
+      ingredients: Array.isArray(cleaned.ingredients)
+        ? cleaned.ingredients
+        : recipe.ingredients.split("\n"),
+
+      instructions: Array.isArray(cleaned.instructions)
+        ? cleaned.instructions
+        : recipe.instructions.split("\n"),
+    };
+  } catch (err) {
+    console.error("AI cleanup failed:", err);
+
+    return {
+      ingredients: recipe.ingredients.split("\n"),
+      instructions: recipe.instructions.split("\n"),
+    };
+  }
 }
 
 // =====================================================
