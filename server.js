@@ -303,10 +303,10 @@ async function applyAiCleanupToResult(result) {
     .map(cleanText)
     .filter(Boolean);
 
-  const cleanedInstructions = cleanedRecipe.instructions
-    .map(cleanHtmlEntities)
-    .map(cleanText)
-    .filter(Boolean);
+  const cleanedInstructions = splitLongInstructionSteps(cleanedRecipe.instructions)
+  .map(cleanHtmlEntities)
+  .map(cleanText)
+  .filter(Boolean);
 
   if (cleanedIngredients.length > 0) {
     result.ingredients = cleanedIngredients;
@@ -600,6 +600,20 @@ function slugify(text) {
     .replace(/-+/g, "-");
 }
 
+function splitLongInstructionSteps(instructions) {
+  return instructions.flatMap((step) => {
+    const text = cleanText(step);
+
+    if (text.length < 220) return [text];
+
+    return text
+      .replace(/\s+/g, " ")
+      .split(/(?<=[.!?])\s+/)
+      .map((part) => part.trim())
+      .filter(Boolean)
+      .map((part) => (/[.!?]$/.test(part) ? part : `${part}.`));
+  });
+}
 // =====================================================
 // AI Recipe Cleanup
 // Cleans imported recipe formatting
@@ -625,6 +639,8 @@ RULES:
 - Normalize capitalization.
 - Remove duplicate or messy wording.
 - Make instructions easier to follow.
+- If instructions are one long paragraph, you MUST split them into multiple short, numbered cooking steps.
+- Each cooking action should usually become its own instruction step.
 - Return valid JSON only.
 
 Return format:
@@ -663,6 +679,22 @@ ${recipe.instructions}
 
     const content = response.choices?.[0]?.message?.content || "";
     const cleaned = JSON.parse(content);
+
+    // =====================================================
+// Split giant instruction blobs into multiple steps
+// =====================================================
+
+if (
+  Array.isArray(cleaned.instructions) &&
+  cleaned.instructions.length === 1
+) {
+  cleaned.instructions = cleaned.instructions[0]
+  .replace(/\s+/g, " ")
+  .split(/(?<=[.!?])\s+/)
+  .map((step) => step.trim())
+  .filter(Boolean)
+  .map((step) => (/[.!?]$/.test(step) ? step : `${step}.`));
+}
 
     return {
       ingredients: Array.isArray(cleaned.ingredients)
