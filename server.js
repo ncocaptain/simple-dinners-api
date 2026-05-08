@@ -128,7 +128,7 @@ async function loadAndExtractRecipe(page, url) {
 }
 
 function extractRecipeFromPage($, sourceUrl, finalUrl) {
-  if (isBlockedPage($)) {
+  if (isBlockedPage($, finalUrl)) {
     const pageTitle = cleanHtmlEntities(cleanText($("title").text()));
 
     return {
@@ -337,21 +337,25 @@ async function applyAiCleanupToResult(result) {
 // Prevents importing bot-check / access denied pages as recipes
 // =====================================================
 
-function isBlockedPage($) {
+function isBlockedPage($, finalUrl = "") {
   const title = cleanText($("title").text()).toLowerCase();
   const body = cleanText($("body").text()).toLowerCase();
 
   return (
-    title.includes("just a moment") ||
-    title.includes("access denied") ||
-    title.includes("access to this page has been denied") ||
-    body.includes("just a moment") ||
-    body.includes("checking your browser") ||
-    body.includes("access to this page has been denied") ||
-    body.includes("please enable cookies") ||
-    body.includes("verify you are human") ||
-    body.includes("attention required")
-  );
+  title.includes("just a moment") ||
+  title.includes("access denied") ||
+  title.includes("access to this page has been denied") ||
+  body.includes("just a moment") ||
+  body.includes("checking your browser") ||
+  body.includes("access to this page has been denied") ||
+  body.includes("please enable cookies") ||
+  body.includes("verify you are human") ||
+  body.includes("attention required") ||
+  finalUrl.includes("js_challenge=1") ||
+  finalUrl.includes("solution=") ||
+  body.includes("blocked by network security") ||
+  body.includes("whoa there, pardner")
+);
 }
 
 // =====================================================
