@@ -121,10 +121,10 @@ async function loadAndExtractRecipe(page, url) {
   const finalUrl = page.url();
   const $ = cheerio.load(html);
 
-  return extractRecipeFromPage($, url, finalUrl);
+  return await extractRecipeFromPage($, url, finalUrl);
 }
 
-function extractRecipeFromPage($, sourceUrl, finalUrl) {
+async function extractRecipeFromPage($, sourceUrl, finalUrl) {
   if (isBlockedPage($)) {
     const pageTitle = cleanHtmlEntities(cleanText($("title").text()));
 
@@ -230,6 +230,12 @@ function extractRecipeFromPage($, sourceUrl, finalUrl) {
   const hasIngredients = ingredients.length > 0;
   const hasInstructions = instructions.length > 0;
 
+  const cleanedRecipe = await cleanRecipeWithAI({
+  name: recipeName,
+  ingredients: ingredients.join("\n"),
+  instructions: instructions.join("\n"),
+});
+
   const successLevel =
     hasIngredients && hasInstructions
       ? "full"
@@ -245,17 +251,19 @@ function extractRecipeFromPage($, sourceUrl, finalUrl) {
     sourceUrl,
     importedFromUrl: finalUrl,
     name: recipeName,
-    ingredients,
-    instructions,
+    ingredients: cleanedRecipe.ingredients,
+instructions: cleanedRecipe.instructions,
     image,
     linkedRecipeUrl,
 
     recipe: {
       name: recipeName,
-      ingredients: hasIngredients ? ingredients.join("\n") : "",
+      ingredients: hasIngredients
+  ? cleanedRecipe.ingredients.join("\n")
+  : "",
       instructions: hasInstructions
-        ? instructions.join("\n")
-        : "Steps available at source link!",
+  ? cleanedRecipe.instructions.join("\n")
+  : "Steps available at source link!",
       photoUrl: image,
       slug: `${slugify(recipeName)}-${Date.now().toString().slice(-4)}`,
       sourceUrl: finalUrl,
