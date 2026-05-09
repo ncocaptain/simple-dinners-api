@@ -420,10 +420,14 @@ function extractInstructions(input) {
   }
 
   if (typeof input === "object") {
-    if (input.text) return extractInstructions(input.text);
-    if (input.name) return extractInstructions(input.name);
-    if (input.itemListElement) return extractInstructions(input.itemListElement);
+  if (input.itemListElement) {
+    const nested = extractInstructions(input.itemListElement);
+    if (nested.length > 0) return nested;
   }
+
+  if (input.text) return extractInstructions(input.text);
+  if (input.name) return extractInstructions(input.name);
+}
 
   return [];
 }
@@ -641,6 +645,12 @@ RULES:
 - Make instructions easier to follow.
 - If instructions are one long paragraph, you MUST split them into multiple short, numbered cooking steps.
 - Each cooking action should usually become its own instruction step.
+- Include ingredient measurements in instructions when helpful.
+- Standardize temperatures using °F.
+- Standardize time wording like "4 to 5 minutes".
+- Keep instructions concise and Cook Mode friendly.
+- Prefer one cooking action per instruction step.
+- Format instructions similarly to a modern cooking app recipe.
 - Return valid JSON only.
 
 Return format:
