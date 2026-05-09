@@ -308,9 +308,10 @@ async function applyAiCleanupToResult(result) {
   const cleanedRecipe = await cleanRecipeWithAI(result.recipe);
 
   const cleanedIngredients = cleanedRecipe.ingredients
-    .map(cleanHtmlEntities)
-    .map(cleanText)
-    .filter(Boolean);
+  .map(cleanHtmlEntities)
+  .map(cleanText)
+  .flatMap(splitEachIngredient)
+  .filter(Boolean);
 
   const cleanedInstructions = splitLongInstructionSteps(cleanedRecipe.instructions)
   .map(cleanHtmlEntities)
@@ -646,6 +647,20 @@ function splitLongInstructionSteps(instructions) {
       .filter(Boolean)
       .map((part) => (/[.!?]$/.test(part) ? part : `${part}.`));
   });
+}
+
+function splitEachIngredient(ingredient) {
+  const match = ingredient.match(
+    /^(.+?)\s+EACH:\s+(.+)$/i
+  );
+
+  if (!match) return [ingredient];
+
+  const amount = match[1].trim();
+
+  return match[2]
+    .split(",")
+    .map(item => `${amount} ${item.trim()}`);
 }
 // =====================================================
 // AI Recipe Cleanup
