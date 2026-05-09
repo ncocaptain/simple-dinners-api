@@ -109,6 +109,69 @@ app.post("/import-recipe", async (request, reply) => {
 });
 
 // =====================================================
+// POST /import-text
+// Paste raw recipe text and normalize into recipe format
+// =====================================================
+
+app.post("/import-text", async (request, reply) => {
+  const { text } = request.body || {};
+
+  if (!text || !String(text).trim()) {
+    return reply.code(400).send({ error: "Recipe text required" });
+  }
+
+  try {
+    const parsed = await parseRecipeTextWithAI(String(text));
+
+    const recipeName = cleanText(parsed.name || "Imported Recipe");
+
+    const roughRecipe = {
+      name: recipeName,
+      ingredients: Array.isArray(parsed.ingredients)
+        ? parsed.ingredients.join("\n")
+        : "",
+      instructions: Array.isArray(parsed.instructions)
+        ? parsed.instructions.join("\n")
+        : "",
+      photoUrl: "",
+      slug: `${slugify(recipeName)}-${Date.now().toString().slice(-4)}`,
+      sourceUrl: "",
+      effort: "normal",
+      importStatus: "text-import",
+      fallbackText: "",
+    };
+
+    const result = {
+      success: true,
+      successLevel: "full",
+      debugVersion: "simple-dinners-api-text-import-v1",
+      sourceUrl: "",
+      importedFromUrl: "",
+      name: recipeName,
+      ingredients: roughRecipe.ingredients.split("\n").filter(Boolean),
+      instructions: roughRecipe.instructions.split("\n").filter(Boolean),
+      image: "",
+      linkedRecipeUrl: "",
+      recipe: roughRecipe,
+      debug: {
+        textImport: true,
+        originalTextLength: String(text).length,
+      },
+    };
+
+    return await applyAiCleanupToResult(result);
+  } catch (error) {
+    request.log.error(error);
+
+    return reply.code(500).send({
+      success: false,
+      successLevel: "error",
+      error: error instanceof Error ? error.message : "Text import failed",
+    });
+  }
+});
+
+// =====================================================
 // Page loading + extraction pipeline
 // =====================================================
 
@@ -672,6 +735,49 @@ function normalizeCookingText(text) {
     .replace(/\(Discard the bones\.\)\s*Return it to the soup\./gi,
   "Discard the bones, then return the shredded chicken to the soup.")
     .trim();
+}
+
+async function parseRecipeTextWithAI(text) {
+  const prompt = `
+Extract a structured recipe from this pasted text.
+
+RULES:
+- Identify the recipe name.
+- Extract ingredients only into the ingredients array.
+- Extract cooking steps only into the instructions array.
+- Do not include section labels like "Ingredients:" or "Instructions:".
+- Do not invent ingredients or steps.
+- Return valid JSON only.
+
+Return format:
+{
+  "name": "...",
+  "ingredients": ["..."],
+  "instructions": ["..."]
+}
+
+Pasted text:
+${text}
+`;
+
+  const response = await openai.chat.completions.create({
+    model: process.env.OPENAI_MODEL || "gpt-5.5",
+    messages: [
+      {
+        role: "system",
+        content:
+          "You extract structured recipes from pasted text for a meal planning app.",
+      },
+      {
+        role: "user",
+        content: prompt,
+      },
+    ],
+    
+  });
+
+  const content = response.choices?.[0]?.message?.content || "";
+  return JSON.parse(content);
 }
 // =====================================================
 // AI Recipe Cleanup
