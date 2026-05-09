@@ -316,6 +316,7 @@ async function applyAiCleanupToResult(result) {
   const cleanedInstructions = splitLongInstructionSteps(cleanedRecipe.instructions)
   .map(cleanHtmlEntities)
   .map(cleanText)
+  .map(normalizeCookingText)
   .filter(Boolean)
   .filter(step =>
     !/^pro tip:/i.test(step) &&
@@ -661,6 +662,16 @@ function splitEachIngredient(ingredient) {
   return match[2]
     .split(",")
     .map(item => `${amount} ${item.trim()}`);
+}
+
+function normalizeCookingText(text) {
+  return String(text || "")
+    .replace(/(\d+)\s*degrees\b/gi, "$1°F")
+    .replace(/(\d+)\s*degree\b/gi, "$1°F")
+    .replace(/\s+/g, " ")
+    .replace(/\(Discard the bones\.\)\s*Return it to the soup\./gi,
+  "Discard the bones, then return the shredded chicken to the soup.")
+    .trim();
 }
 // =====================================================
 // AI Recipe Cleanup
