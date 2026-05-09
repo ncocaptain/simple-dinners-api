@@ -213,6 +213,15 @@ function extractRecipeFromPage($, sourceUrl, finalUrl) {
         /mix|stir|cook|bake|heat|place|add|whisk|combine|pour|season|serve|remove|transfer|drain|spread|sprinkle|preheat/i.test(
           line
         )
+        .filter(step =>
+  !/watch|video|subscribe|newsletter|follow|instagram|youtube/i.test(step)
+)
+.filter(step =>
+  !/^pro tip:/i.test(step) &&
+  !/^this soup freezes/i.test(step) &&
+  !/^this will yield/i.test(step) &&
+  !/^refer to package/i.test(step)
+)
       );
     }
   }
@@ -306,7 +315,18 @@ async function applyAiCleanupToResult(result) {
   const cleanedInstructions = splitLongInstructionSteps(cleanedRecipe.instructions)
   .map(cleanHtmlEntities)
   .map(cleanText)
-  .filter(Boolean);
+  .filter(Boolean)
+  .filter(step =>
+    !/^pro tip:/i.test(step) &&
+    !/^this soup freezes/i.test(step) &&
+    !/^this allows leftover/i.test(step) &&
+    !/^this will yield/i.test(step) &&
+    !/^refer to package/i.test(step) &&
+    !/^\(?refer to package/i.test(step) &&
+    !/^see this video/i.test(step) &&
+    !/^any rice stuck/i.test(step) &&
+    !/^note: other varieties of rice/i.test(step)
+  );
 
   if (cleanedIngredients.length > 0) {
     result.ingredients = cleanedIngredients;
@@ -595,6 +615,15 @@ function cleanHtmlEntities(value) {
     .trim();
 }
 
+function cleanRecipeNoteText(value) {
+  return String(value || "")
+    .replace(/^\(Note:\s*/i, "Note: ")
+    .replace(/^\(Note\s*/i, "Note: ")
+    .replace(/\)+$/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 function slugify(text) {
   return String(text || "recipe")
     .toLowerCase()
@@ -606,14 +635,14 @@ function slugify(text) {
 
 function splitLongInstructionSteps(instructions) {
   return instructions.flatMap((step) => {
-    const text = cleanText(step);
+    const text = cleanRecipeNoteText(cleanText(step));
 
     if (text.length < 220) return [text];
 
     return text
       .replace(/\s+/g, " ")
       .split(/(?<=[.!?])\s+/)
-      .map((part) => part.trim())
+      .map((part) => cleanRecipeNoteText(part))
       .filter(Boolean)
       .map((part) => (/[.!?]$/.test(part) ? part : `${part}.`));
   });
@@ -651,6 +680,12 @@ RULES:
 - Keep instructions concise and Cook Mode friendly.
 - Prefer one cooking action per instruction step.
 - Format instructions similarly to a modern cooking app recipe.
+- When an instruction clearly uses listed ingredients, include the ingredient amounts from the ingredient list when it improves clarity.
+- Do not invent new amounts. Only use amounts already present in the ingredient list.
+- Keep instructions natural and concise.
+- Remove promotional content and non-essential blog commentary.
+- Keep important cooking notes, but remove excessive storage or serving commentary.
+- Prioritize actionable cooking instructions for Cook Mode.
 - Return valid JSON only.
 
 Return format:
