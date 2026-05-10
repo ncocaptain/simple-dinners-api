@@ -267,25 +267,28 @@ function extractRecipeFromPage($, sourceUrl, finalUrl) {
 
     if (instructions.length === 0) {
       instructions = extractBySelectors($, [
-        ".comp.mntl-sc-block.mntl-sc-block-html",
-        ".mntl-sc-block-group--LI",
-        "li[class*='instruction']",
-        "p[class*='instruction']",
-        "div[class*='direction']",
-      ]).filter((line) =>
-        /mix|stir|cook|bake|heat|place|add|whisk|combine|pour|season|serve|remove|transfer|drain|spread|sprinkle|preheat/i.test(
-          line
-        )
-        .filter(step =>
-  !/watch|video|subscribe|newsletter|follow|instagram|youtube/i.test(step)
-)
+  ".comp.mntl-sc-block.mntl-sc-block-html",
+  ".mntl-sc-block-group--LI",
+  "li[class*='instruction']",
+  "p[class*='instruction']",
+  "div[class*='direction']",
+])
+  .filter((line) =>
+    /mix|stir|cook|bake|heat|place|add|whisk|combine|pour|season|serve|remove|transfer|drain|spread|sprinkle|preheat/i.test(
+      line
+    )
+  )
+  .filter(
+    (step) =>
+      !/watch|video|subscribe|newsletter|follow|instagram|youtube/i.test(step)
+  )
 .filter(step =>
   !/^pro tip:/i.test(step) &&
   !/^this soup freezes/i.test(step) &&
   !/^this will yield/i.test(step) &&
   !/^refer to package/i.test(step)
 )
-      );
+      
     }
   }
 
@@ -415,6 +418,59 @@ async function applyAiCleanupToResult(result) {
   };
 
   return result;
+}
+
+async function enhanceInstructionsWithMeasurements(recipe) {
+  try {
+    if (!process.env.OPENAI_API_KEY) return recipe.instructions.split("\n");
+
+    const prompt = `
+Rewrite these recipe instructions to include ingredient amounts where helpful.
+
+RULES:
+- Use ONLY the ingredient amounts provided.
+- Do NOT invent ingredients or measurements.
+- Keep steps natural and concise.
+- Keep the same cooking meaning.
+- Return valid JSON only.
+
+Return format:
+{
+  "instructions": ["..."]
+}
+
+Ingredients:
+${recipe.ingredients}
+
+Instructions:
+${recipe.instructions}
+`;
+
+    const response = await openai.chat.completions.create({
+      model: process.env.OPENAI_MODEL || "gpt-5.5",
+      messages: [
+        {
+          role: "system",
+          content:
+            "You improve recipe instructions for Cook Mode by adding existing ingredient measurements where helpful.",
+        },
+        {
+          role: "user",
+          content: prompt,
+        },
+      ],
+    });
+
+    const content = response.choices?.[0]?.message?.content || "";
+    const parsed = JSON.parse(content);
+
+    return Array.isArray(parsed.instructions)
+      ? parsed.instructions
+      : recipe.instructions.split("\n");
+  } catch (err) {
+    console.error("Measurement instruction enhancement failed:", err);
+    return recipe.instructions.split("\n");
+  }
 }
 
 // =====================================================
@@ -818,6 +874,13 @@ RULES:
 - Remove promotional content and non-essential blog commentary.
 - Keep important cooking notes, but remove excessive storage or serving commentary.
 - Prioritize actionable cooking instructions for Cook Mode.
+- When an instruction clearly uses ingredients from the ingredient list, include the ingredient measurements naturally when helpful.
+- Do NOT invent measurements. Only use amounts already present in the ingredient list.
+- Do not force every ingredient amount into every step. Only add measurements where it improves clarity.
+- Keep instructions natural, concise, and Cook Mode friendly.
+- When creating instructions, include ingredient amounts from the ingredient list where helpful.
+- Example: "Cook chicken with taco seasoning and salsa" should become "Cook 1 lb chicken breast with 1 tbsp taco seasoning and 1/2 cup salsa".
+- Do NOT invent amounts. Only use amounts from the pasted recipe text.
 - Return valid JSON only.
 
 Return format:
@@ -851,7 +914,6 @@ ${recipe.instructions}
           content: prompt,
         },
       ],
-      temperature: 0.2,
     });
 
     const content = response.choices?.[0]?.message?.content || "";
