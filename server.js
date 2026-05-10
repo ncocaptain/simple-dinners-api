@@ -59,6 +59,15 @@ app.post("/import-recipe", async (request, reply) => {
     });
 
     const page = await context.newPage();
+    await page.route("**/*", (route) => {
+  const resourceType = route.request().resourceType();
+
+  if (["image", "font", "media"].includes(resourceType)) {
+    return route.abort();
+  }
+
+  return route.continue();
+});
 
     const firstResult = await loadAndExtractRecipe(page, url);
 
@@ -187,7 +196,7 @@ async function loadAndExtractRecipe(page, url) {
     // Some ad-heavy sites never fully go idle. That's okay.
   }
 
-  await page.waitForTimeout(2500);
+  await page.waitForTimeout(1500);
 
   const html = await page.content();
   const finalUrl = page.url();
