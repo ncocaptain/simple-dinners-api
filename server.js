@@ -382,6 +382,7 @@ async function applyAiCleanupToResult(result) {
   .filter(Boolean);
 
   const cleanedInstructions = splitLongInstructionSteps(cleanedRecipe.instructions)
+  .map(removeSecondaryMeasurements)
   .map(cleanHtmlEntities)
   .map(cleanText)
   .map(normalizeCookingText)
