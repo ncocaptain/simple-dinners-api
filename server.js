@@ -177,11 +177,16 @@ app.post("/import-text", async (request, reply) => {
 
 async function loadAndExtractRecipe(page, url) {
   await page.goto(url, {
-    waitUntil: "networkidle",
+    waitUntil: "domcontentloaded",
     timeout: 45000,
   });
 
-  await page.waitForLoadState("domcontentloaded");
+  try {
+    await page.waitForLoadState("networkidle", { timeout: 8000 });
+  } catch {
+    // Some ad-heavy sites never fully go idle. That's okay.
+  }
+
   await page.waitForTimeout(2500);
 
   const html = await page.content();
