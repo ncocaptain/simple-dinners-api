@@ -177,11 +177,12 @@ app.post("/import-text", async (request, reply) => {
 
 async function loadAndExtractRecipe(page, url) {
   await page.goto(url, {
-    waitUntil: "domcontentloaded",
+    waitUntil: "networkidle",
     timeout: 45000,
   });
 
-  await page.waitForTimeout(4000);
+  await page.waitForLoadState("domcontentloaded");
+  await page.waitForTimeout(2500);
 
   const html = await page.content();
   const finalUrl = page.url();
@@ -374,6 +375,7 @@ async function applyAiCleanupToResult(result) {
   const cleanedRecipe = await cleanRecipeWithAI(result.recipe);
 
   const cleanedIngredients = cleanedRecipe.ingredients
+  .map(removeSecondaryMeasurements)
   .map(cleanHtmlEntities)
   .map(cleanText)
   .flatMap(splitEachIngredient)
@@ -834,6 +836,16 @@ ${text}
 
   const content = response.choices?.[0]?.message?.content || "";
   return JSON.parse(content);
+}
+
+function removeSecondaryMeasurements(text) {
+  return String(text || "")
+    .replace(
+      /(\d[\d\/.\s]*(?:oz|ounces?|cups?|tbsp|tablespoons?|tsp|teaspoons?|lb|lbs|pounds?))\s*\([^)]*(?:g|grams|kg|ml|milliliters?|l|liters?)[^)]*\)/gi,
+      "$1"
+    )
+    .replace(/\s+/g, " ")
+    .trim();
 }
 // =====================================================
 // AI Recipe Cleanup
