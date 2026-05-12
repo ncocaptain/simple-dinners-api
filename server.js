@@ -812,15 +812,55 @@ function normalizeCookingText(text) {
 
 async function parseRecipeTextWithAI(text) {
   const prompt = `
-Extract a structured recipe from this pasted text.
+Extract ONE clean, structured recipe from this pasted text.
+
+The pasted text may be messy. It may include:
+- blog stories
+- ads
+- comments
+- nutrition text
+- social media prompts
+- "jump to recipe"
+- "pin this recipe"
+- related recipe links
+- repeated recipe card content
+- duplicate ingredient or instruction sections
+- full webpage text copied from a recipe site
+
+PRIMARY GOAL:
+Find the main recipe and convert it into a clean Simple Dinners recipe.
 
 RULES:
-- Identify the recipe name.
-- Extract ingredients only into the ingredients array.
+- Extract only the main recipe.
+- Ignore blog commentary, ads, comments, nutrition disclaimers, social prompts, related recipes, and promotional text.
+- Prefer the most complete recipe card if the text contains repeated sections.
+- Do not include "Ingredients:", "Instructions:", "Notes:", "Nutrition:", or similar labels as standalone items.
+- Preserve meaningful ingredient section labels by placing them inside the ingredients array as simple headings ending with a colon.
+  Example: "Chicken:", "Bruschetta:", "Dressing:", "Sauce:", "Topping:"
+- Keep ingredient lines directly under their section heading.
+- Do not flatten separate ingredient sections into one confusing list if the recipe clearly has sections.
+- Remove duplicate ingredient lines caused by repeated copied page content.
+- Do not remove similar ingredients when they belong to different sections.
+  Example: "1 clove garlic" for chicken and "2 cloves garlic" for topping may both be valid.
 - Extract cooking steps only into the instructions array.
-- Do not include section labels like "Ingredients:" or "Instructions:".
-- Do not invent ingredients or steps.
+- Do not invent ingredients, measurements, or cooking steps.
+- Keep ingredient measurements exactly as provided when possible.
+- Keep package sizes when meaningful.
+  Example: keep "2 (14 oz) cans".
+- It is okay to remove secondary metric conversions when there is already a clear US measurement.
+  Example: "10.5 oz (300 g)" may become "10.5 oz".
 - Return valid JSON only.
+
+COOK MODE INSTRUCTION RULES:
+- Instructions should be clear, natural, and Cook Mode friendly.
+- Include ingredient measurements in instructions when helpful.
+- Use ONLY measurements found in the pasted recipe text.
+- Do not invent amounts.
+- Split overloaded steps into smaller steps when multiple unrelated actions are combined.
+- Do not mash marinade, topping, sauce, garnish, and serving steps into one giant instruction.
+- Prefer one main cooking action per instruction step.
+- Keep steps concise but useful.
+- Each instruction should be understandable without constantly checking the ingredient list.
 
 Return format:
 {
@@ -839,14 +879,13 @@ ${text}
       {
         role: "system",
         content:
-          "You extract structured recipes from pasted text for a meal planning app.",
+          "You extract clean, structured recipes from messy pasted webpage text for Simple Dinners, a meal planning and Cook Mode app.",
       },
       {
         role: "user",
         content: prompt,
       },
     ],
-    
   });
 
   const content = response.choices?.[0]?.message?.content || "";
@@ -877,38 +916,63 @@ async function cleanRecipeWithAI(recipe) {
     }
 
     const prompt = `
-You are cleaning and standardizing a recipe for a cooking app.
+You are cleaning and standardizing a recipe for Simple Dinners, a meal planning and Cook Mode app.
 
-RULES:
+PRIMARY GOAL:
+Make the recipe feel like a native Simple Dinners recipe:
+- clean ingredient list
+- clear ingredient sections when useful
+- natural Cook Mode-friendly instructions
+- ingredient measurements included in instructions when helpful
+
+STRICT RULES:
 - Do NOT invent ingredients.
+- Do NOT invent measurements.
 - Do NOT invent cooking steps.
 - Keep the recipe faithful to the original.
-- Improve clarity and formatting.
-- Normalize capitalization.
-- Remove duplicate or messy wording.
-- Make instructions easier to follow.
-- If instructions are one long paragraph, you MUST split them into multiple short, numbered cooking steps.
-- Each cooking action should usually become its own instruction step.
+- Use only ingredients, amounts, and steps already present in the recipe text.
+- Return valid JSON only.
+
+INGREDIENT RULES:
+- Normalize capitalization and spacing.
+- Remove duplicate ingredient lines caused by messy imports.
+- Preserve meaningful ingredient section headings.
+  Example: "Chicken:", "Bruschetta:", "Sauce:", "Dressing:", "Topping:", "Finish:"
+- Section headings should be included in the ingredients array as their own item ending with a colon.
+- Do not include generic labels like "Ingredients:" as a heading.
+- Do not flatten separate sections if the recipe clearly has multiple parts.
+- Do not delete similar ingredients when they belong to different sections.
+  Example: garlic in a marinade and garlic in a topping can both remain.
+- Remove promotional, blog, nutrition, storage, comment, and unrelated webpage text.
+- Keep meaningful package sizing.
+  Example: "2 (14 oz) cans diced tomatoes".
+- Remove duplicate metric conversions when a clear US measurement exists.
+  Example: "10.5 oz (300 g)" can become "10.5 oz".
+
+INSTRUCTION RULES:
+- Make instructions Cook Mode friendly.
 - Include ingredient measurements in instructions when helpful.
+- Use ONLY measurements from the ingredient list or original recipe text.
+- Do not force every measurement into every step.
+- Add measurements naturally, not awkwardly.
+- Split overloaded steps into smaller, clearer steps.
+- Prefer one main cooking action per instruction step.
+- Do not combine marinade, topping, sauce, garnish, and serving steps into one giant instruction.
+- Keep instructions concise, but useful enough that the cook does not need to constantly jump back to the ingredient list.
 - Standardize temperatures using °F.
 - Standardize time wording like "4 to 5 minutes".
-- Keep instructions concise and Cook Mode friendly.
-- Prefer one cooking action per instruction step.
-- Format instructions similarly to a modern cooking app recipe.
-- When an instruction clearly uses listed ingredients, include the ingredient amounts from the ingredient list when it improves clarity.
-- Do not invent new amounts. Only use amounts already present in the ingredient list.
-- Keep instructions natural and concise.
-- Remove promotional content and non-essential blog commentary.
-- Keep important cooking notes, but remove excessive storage or serving commentary.
-- Prioritize actionable cooking instructions for Cook Mode.
-- When an instruction clearly uses ingredients from the ingredient list, include the ingredient measurements naturally when helpful.
-- Do NOT invent measurements. Only use amounts already present in the ingredient list.
-- Do not force every ingredient amount into every step. Only add measurements where it improves clarity.
-- Keep instructions natural, concise, and Cook Mode friendly.
-- When creating instructions, include ingredient amounts from the ingredient list where helpful.
-- Example: "Cook chicken with taco seasoning and salsa" should become "Cook 1 lb chicken breast with 1 tbsp taco seasoning and 1/2 cup salsa".
-- Do NOT invent amounts. Only use amounts from the pasted recipe text.
-- Return valid JSON only.
+- Remove non-actionable commentary unless it is an important cooking note.
+
+GOOD EXAMPLES:
+- "Add mushrooms and cook until browned" should become "Add 16 oz mushrooms and cook 6 to 8 minutes, until browned."
+- "Stir in cream and parmesan" should become "Stir in 1/2 cup heavy cream and 1/2 cup grated parmesan."
+- "Cook chicken with seasoning" should become "Cook 1 lb chicken with 1 tbsp seasoning" only if those amounts exist in the ingredients.
+
+BAD EXAMPLES:
+- Do not create a giant step that combines every ingredient in the recipe.
+- Do not add measurements that are not listed.
+- Do not include "Jump to Recipe", "Pin this", "Subscribe", "Nutrition", or blog text.
+- Do not turn section headings into cooking steps.
 
 Return format:
 {
@@ -934,7 +998,7 @@ ${recipe.instructions}
         {
           role: "system",
           content:
-            "You clean and standardize cooking recipes for a meal planning app.",
+            "You clean and standardize recipes for Simple Dinners. Preserve measurements for Cook Mode and keep recipes faithful to the original.",
         },
         {
           role: "user",
@@ -947,20 +1011,20 @@ ${recipe.instructions}
     const cleaned = JSON.parse(content);
 
     // =====================================================
-// Split giant instruction blobs into multiple steps
-// =====================================================
+    // Split giant instruction blobs into multiple steps
+    // =====================================================
 
-if (
-  Array.isArray(cleaned.instructions) &&
-  cleaned.instructions.length === 1
-) {
-  cleaned.instructions = cleaned.instructions[0]
-  .replace(/\s+/g, " ")
-  .split(/(?<=[.!?])\s+/)
-  .map((step) => step.trim())
-  .filter(Boolean)
-  .map((step) => (/[.!?]$/.test(step) ? step : `${step}.`));
-}
+    if (
+      Array.isArray(cleaned.instructions) &&
+      cleaned.instructions.length === 1
+    ) {
+      cleaned.instructions = cleaned.instructions[0]
+        .replace(/\s+/g, " ")
+        .split(/(?<=[.!?])\s+/)
+        .map((step) => step.trim())
+        .filter(Boolean)
+        .map((step) => (/[.!?]$/.test(step) ? step : `${step}.`));
+    }
 
     return {
       ingredients: Array.isArray(cleaned.ingredients)
