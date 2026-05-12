@@ -392,6 +392,7 @@ async function applyAiCleanupToResult(result) {
   .map(removeSecondaryMeasurements)
   .map(cleanHtmlEntities)
   .map(cleanText)
+  .map(fixBrokenCommonWords)
   .flatMap(splitEachIngredient)
   .filter(Boolean);
 
@@ -400,6 +401,7 @@ async function applyAiCleanupToResult(result) {
   .map(cleanHtmlEntities)
   .map(cleanText)
   .map(normalizeCookingText)
+  .map(fixBrokenCommonWords)
   .filter(Boolean)
   .filter(step =>
     !/^pro tip:/i.test(step) &&
@@ -810,6 +812,24 @@ function normalizeCookingText(text) {
     .trim();
 }
 
+function fixBrokenCommonWords(text) {
+  return String(text || "")
+    .replace(/\bth\s+e\b/gi, "the")
+    .replace(/\bwh\s+en\b/gi, "when")
+    .replace(/\bov\s+er\b/gi, "over")
+    .replace(/\bund\s+er\b/gi, "under")
+    .replace(/\brem\s+aining\b/gi, "remaining")
+    .replace(/\btom\s+atoes\b/gi, "tomatoes")
+    .replace(/\bch\s+icken\b/gi, "chicken")
+    .replace(/\bbl\s+ack\b/gi, "black")
+    .replace(/\bl\s+ack\b/gi, "black")
+    .replace(/\bcl\s+ove\b/gi, "clove")
+    .replace(/\bfr\s+esh\b/gi, "fresh")
+    .replace(/\bmozz\s+arella\b/gi, "mozzarella")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 async function parseRecipeTextWithAI(text) {
   const prompt = `
 Extract ONE clean, structured recipe from this pasted text.
@@ -957,6 +977,7 @@ INSTRUCTION RULES:
 - Add measurements naturally, not awkwardly.
 - Split overloaded steps into smaller, clearer steps.
 - When a step combines more than 5 ingredients, split it into 2 smaller steps if there is a natural break, such as wet ingredients first, seasonings/aromatics second, or adding the main protein/vegetables after mixing the marinade, sauce, or topping.
+- Fix broken spacing inside common words caused by copied webpage text, such as "th e" becoming "the" and "tom atoes" becoming "tomatoes".
 - Prefer one main cooking action per instruction step.
 - Do not combine marinade, topping, sauce, garnish, and serving steps into one giant instruction.
 - Keep instructions concise, but useful enough that the cook does not need to constantly jump back to the ingredient list.
