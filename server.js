@@ -820,12 +820,16 @@ function fixBrokenCommonWords(text) {
     .replace(/\bund\s+er\b/gi, "under")
     .replace(/\brem\s+aining\b/gi, "remaining")
     .replace(/\btom\s+atoes\b/gi, "tomatoes")
+    .replace(/\bto\s+matoes\b/gi, "tomatoes")
     .replace(/\bch\s+icken\b/gi, "chicken")
     .replace(/\bbl\s+ack\b/gi, "black")
+    .replace(/\bb\s+lack\b/gi, "black")
     .replace(/\bl\s+ack\b/gi, "black")
     .replace(/\bcl\s+ove\b/gi, "clove")
     .replace(/\bfr\s+esh\b/gi, "fresh")
     .replace(/\bmozz\s+arella\b/gi, "mozzarella")
+    .replace(/\boregano\b/gi, "oregano")
+    .replace(/\bregano\b/gi, "oregano")
     .replace(/\s+/g, " ")
     .trim();
 }
