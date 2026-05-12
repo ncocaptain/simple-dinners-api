@@ -425,11 +425,30 @@ async function applyAiCleanupToResult(result) {
     result.recipe.instructions = cleanedInstructions.join("\n");
   }
 
+  const cleanedEffort = normalizeEffort(cleanedRecipe.effort);
+const cleanedTags = normalizeTags(cleanedRecipe.tags);
+const cleanedIsVegetarian = normalizeBoolean(cleanedRecipe.isVegetarian);
+const cleanedNotes = normalizeRecipeNotes(cleanedRecipe.notes);
+
+result.recipe.effort = cleanedEffort;
+result.recipe.tags = cleanedTags;
+result.recipe.isVegetarian = cleanedIsVegetarian;
+
+if (cleanedNotes) {
+  result.recipe.notes = cleanedNotes;
+}
+
+result.effort = cleanedEffort;
+result.tags = cleanedTags;
+result.isVegetarian = cleanedIsVegetarian;
+result.notes = cleanedNotes;
+
   result.aiCleanup = {
-    enabled: true,
-    ingredientsCount: cleanedIngredients.length,
-    instructionsCount: cleanedInstructions.length,
-  };
+  enabled: true,
+  ingredientsCount: cleanedIngredients.length,
+  instructionsCount: cleanedInstructions.length,
+  metadataDetected: true,
+};
 
   result.debug = {
     ...(result.debug || {}),
@@ -764,6 +783,84 @@ function cleanRecipeNoteText(value) {
     .trim();
 }
 
+function normalizeEffort(value) {
+  const effort = String(value || "").toLowerCase().trim();
+
+  if (effort === "quick") return "quick";
+  if (effort === "big") return "big";
+
+  return "normal";
+}
+
+function normalizeTags(tags) {
+  if (!Array.isArray(tags)) return [];
+
+  const allowedTags = new Set([
+    "air-fryer",
+    "asian",
+    "beef",
+    "breakfast",
+    "casserole",
+    "chicken",
+    "comfort",
+    "crockpot",
+    "dessert",
+    "dinner",
+    "easy",
+    "family",
+    "fish",
+    "freezer-friendly",
+    "gluten-free",
+    "grilling",
+    "healthy",
+    "italian",
+    "kid-friendly",
+    "low-carb",
+    "lunch",
+    "mexican",
+    "one-pot",
+    "oven",
+    "pasta",
+    "pork",
+    "quick",
+    "rice",
+    "salad",
+    "seafood",
+    "sheet-pan",
+    "side",
+    "slow-cooker",
+    "soup",
+    "spicy",
+    "stovetop",
+    "tacos",
+    "vegetarian",
+  ]);
+
+  return Array.from(
+    new Set(
+      tags
+        .map((tag) =>
+          String(tag || "")
+            .toLowerCase()
+            .trim()
+            .replace(/\s+/g, "-")
+        )
+        .filter((tag) => allowedTags.has(tag))
+    )
+  ).slice(0, 8);
+}
+
+function normalizeBoolean(value) {
+  return value === true;
+}
+
+function normalizeRecipeNotes(value) {
+  return String(value || "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 240);
+}
+
 function slugify(text) {
   return String(text || "recipe")
     .toLowerCase()
@@ -933,11 +1030,15 @@ function removeSecondaryMeasurements(text) {
 async function cleanRecipeWithAI(recipe) {
   try {
     if (!process.env.OPENAI_API_KEY) {
-      return {
-        ingredients: recipe.ingredients.split("\n"),
-        instructions: recipe.instructions.split("\n"),
-      };
-    }
+  return {
+    ingredients: recipe.ingredients.split("\n"),
+    instructions: recipe.instructions.split("\n"),
+    effort: recipe.effort || "normal",
+    tags: Array.isArray(recipe.tags) ? recipe.tags : [],
+    isVegetarian: recipe.isVegetarian === true,
+    notes: recipe.notes || "",
+  };
+}
 
     const prompt = `
 You are cleaning and standardizing a recipe for Simple Dinners, a meal planning and Cook Mode app.
@@ -1000,10 +1101,28 @@ BAD EXAMPLES:
 - Do not include "Jump to Recipe", "Pin this", "Subscribe", "Nutrition", or blog text.
 - Do not turn section headings into cooking steps.
 
+METADATA RULES:
+- Choose effort as exactly one of: "quick", "normal", or "big".
+- Use "quick" for recipes that are simple, mostly hands-off, or usually done in about 30 minutes or less.
+- Use "normal" for typical weeknight dinners with moderate prep or cook time.
+- Use "big" for recipes with long cook times, many components, smoking, slow roasting, complicated prep, or special effort.
+- Add 3 to 8 useful tags.
+- Tags should be lowercase and practical for browsing.
+- Prefer tags from this list when they apply:
+  dinner, chicken, beef, pork, seafood, fish, pasta, rice, tacos, soup, salad, casserole, comfort, family, kid-friendly, quick, easy, oven, stovetop, slow-cooker, crockpot, air-fryer, grilling, sheet-pan, one-pot, vegetarian, healthy, spicy, italian, mexican, asian, breakfast, lunch, side, dessert, freezer-friendly, gluten-free, low-carb
+- Set isVegetarian to true only if the recipe has no meat, poultry, seafood, fish, or meat-based broth.
+- Write one short notes sentence that explains what makes the recipe useful, flavorful, or worth making.
+- Do not mention that the recipe was imported.
+- Do not include source website commentary.
+
 Return format:
 {
   "ingredients": ["..."],
-  "instructions": ["..."]
+  "instructions": ["..."],
+  "effort": "quick",
+  "tags": ["dinner", "chicken", "comfort"],
+  "isVegetarian": false,
+  "notes": "A short helpful recipe note."
 }
 
 Recipe:
@@ -1036,6 +1155,7 @@ ${recipe.instructions}
     const content = response.choices?.[0]?.message?.content || "";
     const cleaned = JSON.parse(content);
 
+
     // =====================================================
     // Split giant instruction blobs into multiple steps
     // =====================================================
@@ -1060,6 +1180,21 @@ ${recipe.instructions}
       instructions: Array.isArray(cleaned.instructions)
         ? cleaned.instructions
         : recipe.instructions.split("\n"),
+
+      effort: cleaned.effort || recipe.effort || "normal",
+
+      tags: Array.isArray(cleaned.tags)
+        ? cleaned.tags
+        : Array.isArray(recipe.tags)
+        ? recipe.tags
+        : [],
+
+      isVegetarian:
+        typeof cleaned.isVegetarian === "boolean"
+          ? cleaned.isVegetarian
+          : recipe.isVegetarian === true,
+
+      notes: cleaned.notes || recipe.notes || "",
     };
   } catch (err) {
     console.error("AI cleanup failed:", err);
@@ -1067,6 +1202,10 @@ ${recipe.instructions}
     return {
       ingredients: recipe.ingredients.split("\n"),
       instructions: recipe.instructions.split("\n"),
+      effort: recipe.effort || "normal",
+      tags: Array.isArray(recipe.tags) ? recipe.tags : [],
+      isVegetarian: recipe.isVegetarian === true,
+      notes: recipe.notes || "",
     };
   }
 }
