@@ -956,6 +956,7 @@ INSTRUCTION RULES:
 - Do not force every measurement into every step.
 - Add measurements naturally, not awkwardly.
 - Split overloaded steps into smaller, clearer steps.
+- When a step combines more than 5 ingredients, split it into 2 smaller steps if there is a natural break, such as wet ingredients first, seasonings/aromatics second, or adding the main protein/vegetables after mixing the marinade, sauce, or topping.
 - Prefer one main cooking action per instruction step.
 - Do not combine marinade, topping, sauce, garnish, and serving steps into one giant instruction.
 - Keep instructions concise, but useful enough that the cook does not need to constantly jump back to the ingredient list.
