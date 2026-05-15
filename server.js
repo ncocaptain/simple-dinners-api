@@ -1073,6 +1073,15 @@ INGREDIENT RULES:
   Example: "2 (14 oz) cans diced tomatoes".
 - Remove duplicate metric conversions when a clear US measurement exists.
   Example: "10.5 oz (300 g)" can become "10.5 oz".
+  - Convert metric measurements to common US cooking measurements when practical. Prefer cups, tablespoons, teaspoons, ounces, pounds, or common package sizes. Keep conversions natural and approximate when needed.
+- For weight-based ingredients like meat, noodles, cheese, tofu, or packaged foods, prefer ounces or pounds.
+- For chopped vegetables, fruit, herbs, and loose ingredients, cups are often better when reasonable.
+- Do not invent exact precision. Use "about" when the conversion is approximate.
+- Examples:
+  "350 g mixed vegetables" can become "about 3 cups mixed vegetables".
+  "410 g fresh egg noodles" can become "about 14 oz fresh egg noodles".
+  "15 ml soy sauce" can become "1 tbsp soy sauce".
+  "5 ml sesame oil" can become "1 tsp sesame oil".
 
 INSTRUCTION RULES:
 - Make instructions Cook Mode friendly.
@@ -1080,6 +1089,7 @@ INSTRUCTION RULES:
 - Use ONLY measurements from the ingredient list or original recipe text.
 - Do not force every measurement into every step.
 - Add measurements naturally, not awkwardly.
+- When converting metric measurements in ingredients, also use the converted US-friendly measurement in the instructions so Cook Mode stays consistent.
 - Split overloaded steps into smaller, clearer steps.
 - When a step combines more than 5 ingredients, split it into 2 smaller steps if there is a natural break, such as wet ingredients first, seasonings/aromatics second, or adding the main protein/vegetables after mixing the marinade, sauce, or topping.
 - Fix broken spacing inside common words caused by copied webpage text, such as "th e" becoming "the" and "tom atoes" becoming "tomatoes".
