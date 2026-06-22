@@ -34,9 +34,15 @@ app.get("/", async () => {
 app.post("/import-recipe", async (request, reply) => {
   const { url } = request.body || {};
 
-  if (!url) {
-    return reply.code(400).send({ error: "URL required" });
-  }
+if (!url) {
+  return reply.code(400).send({ error: "URL required" });
+}
+
+const importUrl = normalizeImportUrl(url);
+console.log("Using Simple Dinners API importer:", {
+  originalUrl: url,
+  importUrl,
+});
 
   let browser;
 
@@ -69,12 +75,12 @@ app.post("/import-recipe", async (request, reply) => {
   return route.continue();
 });
 
-    const firstResult = await loadAndExtractRecipe(page, url);
+    const firstResult = await loadAndExtractRecipe(page, importUrl);
 
     const shouldFollowLinkedRecipe =
       firstResult.success &&
       firstResult.linkedRecipeUrl &&
-      firstResult.ingredients.length === 0;
+      (firstResult.ingredients || []).length === 0;
 
     if (shouldFollowLinkedRecipe) {
       const linkedResult = await loadAndExtractRecipe(
@@ -205,6 +211,70 @@ async function loadAndExtractRecipe(page, url) {
   return extractRecipeFromPage($, url, finalUrl);
 }
 
+function normalizeImportUrl(rawUrl) {
+  const value = String(rawUrl || "").trim();
+
+  if (!value) return "";
+
+  const firstUrlMatch = value.match(/https?:\/\/[^\s]+/i);
+  const candidate = firstUrlMatch ? firstUrlMatch[0] : value;
+
+  try {
+    const parsed = new URL(candidate);
+    const host = parsed.hostname.toLowerCase();
+
+    const redirectParamNames = ["u", "url", "target", "redirect", "redirect_url"];
+
+    for (const paramName of redirectParamNames) {
+      const possibleRedirect = parsed.searchParams.get(paramName);
+
+      if (possibleRedirect && /^https?:\/\//i.test(possibleRedirect)) {
+        return normalizeImportUrl(possibleRedirect);
+      }
+    }
+
+    if (
+      host.includes("facebook.com") ||
+      host.includes("fb.watch") ||
+      host.includes("instagram.com") ||
+      host.includes("tiktok.com") ||
+      host.includes("pinterest.com")
+    ) {
+      return candidate;
+    }
+
+    parsed.hash = "";
+
+    [
+      "utm_source",
+      "utm_medium",
+      "utm_campaign",
+      "utm_term",
+      "utm_content",
+      "fbclid",
+      "gclid",
+      "mc_cid",
+      "mc_eid",
+    ].forEach((key) => parsed.searchParams.delete(key));
+
+    return parsed.toString();
+  } catch {
+    return candidate;
+  }
+}
+
+function isSocialRecipeUrl(url) {
+  const value = String(url || "").toLowerCase();
+
+  return (
+    value.includes("facebook.com") ||
+    value.includes("fb.watch") ||
+    value.includes("instagram.com") ||
+    value.includes("tiktok.com") ||
+    value.includes("pinterest.com")
+  );
+}
+
 function extractRecipeFromPage($, sourceUrl, finalUrl) {
   if (isBlockedPage($, finalUrl)) {
     const pageTitle = cleanHtmlEntities(cleanText($("title").text()));
@@ -316,6 +386,17 @@ function extractRecipeFromPage($, sourceUrl, finalUrl) {
     $("meta[name='twitter:image']").attr("content") ||
     "";
 
+    const description = cleanHtmlEntities(
+  cleanText(
+    $("meta[property='og:description']").attr("content") ||
+      $("meta[name='description']").attr("content") ||
+      $("meta[name='twitter:description']").attr("content") ||
+      ""
+  )
+);
+
+const isSocialSource = isSocialRecipeUrl(finalUrl) || isSocialRecipeUrl(sourceUrl);
+
   const linkedRecipeUrl = finalUrl.includes("allrecipes.com")
     ? findAllrecipesRecipeLink($, finalUrl, recipeName)
     : "";
@@ -324,11 +405,13 @@ function extractRecipeFromPage($, sourceUrl, finalUrl) {
   const hasInstructions = instructions.length > 0;
 
   const successLevel =
-    hasIngredients && hasInstructions
-      ? "full"
-      : hasIngredients || hasInstructions
-      ? "partial"
-      : "metadata-only";
+  hasIngredients && hasInstructions
+    ? "full"
+    : hasIngredients || hasInstructions
+    ? "partial"
+    : isSocialSource
+    ? "social-metadata-only"
+    : "metadata-only";
 
   return {
     success: true,
@@ -354,7 +437,10 @@ function extractRecipeFromPage($, sourceUrl, finalUrl) {
       sourceUrl: finalUrl,
       effort: "normal",
       importStatus: successLevel,
-      fallbackText: "",
+      fallbackText:
+  !hasIngredients && !hasInstructions
+    ? [recipeName, description, finalUrl].filter(Boolean).join("\n\n")
+    : "",
     },
 
     debug: {
@@ -363,6 +449,8 @@ function extractRecipeFromPage($, sourceUrl, finalUrl) {
       instructionsCount: instructions.length,
       finalUrl,
       linkedRecipeUrl,
+      description,
+isSocialSource,
     },
   };
 }
