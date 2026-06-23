@@ -483,7 +483,45 @@ async function applyAiCleanupToResult(result) {
     result.recipe.instructions.trim().length > 0 &&
     result.recipe.instructions !== "Steps available at source link!";
 
-  if (!hasIngredients && !hasInstructions) return result;
+    if (!hasIngredients && !hasInstructions) return result;
+
+  const ingredientCount = result.recipe.ingredients
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean).length;
+
+  const instructionCount = result.recipe.instructions
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean).length;
+
+  const shouldSkipAiCleanup =
+    result.successLevel === "full" &&
+    ingredientCount <= 6 &&
+    instructionCount <= 6;
+
+  if (shouldSkipAiCleanup) {
+    result.aiCleanup = {
+      enabled: false,
+      skipped: true,
+      reason: "simple-full-import",
+      ingredientsCount: ingredientCount,
+      instructionsCount: instructionCount,
+    };
+
+    result.debug = {
+      ...(result.debug || {}),
+      aiCleanupSkipped: true,
+    };
+
+    console.log("AI cleanup skipped:", {
+      reason: "simple-full-import",
+      ingredientsCount: ingredientCount,
+      instructionsCount: instructionCount,
+    });
+
+    return result;
+  }
 
   const aiStartedAt = Date.now();
 
