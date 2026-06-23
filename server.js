@@ -66,18 +66,48 @@ console.log("Using Simple Dinners API importer:", {
       },
     });
 
-    const page = await context.newPage();
-    await page.route("**/*", (route) => {
-  const resourceType = route.request().resourceType();
+    let firstResult = null;
 
-  if (["image", "font", "media"].includes(resourceType)) {
-    return route.abort();
-  }
+try {
+  firstResult = await fetchAndExtractRecipe(importUrl);
 
-  return route.continue();
-});
+  console.log("Fast HTML extraction finished:", {
+    success: firstResult?.success,
+    successLevel: firstResult?.successLevel,
+    name: firstResult?.name,
+    ingredientsCount: firstResult?.ingredients?.length || 0,
+    instructionsCount: firstResult?.instructions?.length || 0,
+  });
+} catch (fetchError) {
+  console.log("Fast HTML extraction failed:", {
+    error:
+      fetchError instanceof Error
+        ? fetchError.message
+        : "Unknown fetch error",
+  });
+}
 
-    const firstResult = await loadAndExtractRecipe(page, importUrl);
+const fastImportWorked =
+  firstResult?.success &&
+  firstResult?.recipe &&
+  firstResult.successLevel !== "metadata-only" &&
+  firstResult.successLevel !== "social-metadata-only";
+
+if (!fastImportWorked) {
+  const page = await context.newPage();
+
+  await page.route("**/*", (route) => {
+    const resourceType = route.request().resourceType();
+
+    if (["image", "font", "media"].includes(resourceType)) {
+      return route.abort();
+    }
+
+    return route.continue();
+  });
+
+  firstResult = await loadAndExtractRecipe(page, importUrl);
+}
 
     console.log("Recipe page extraction finished:", {
   seconds: Math.round((Date.now() - startedAt) / 1000),
@@ -200,6 +230,34 @@ app.post("/import-text", async (request, reply) => {
 // =====================================================
 // Page loading + extraction pipeline
 // =====================================================
+
+async function fetchAndExtractRecipe(url) {
+  const response = await fetch(url, {
+    method: "GET",
+    headers: {
+      "User-Agent":
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+      "Accept":
+        "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+      "Accept-Language": "en-US,en;q=0.9",
+      "Upgrade-Insecure-Requests": "1",
+    },
+  });
+
+  if (!response.ok) {
+    return {
+      success: false,
+      successLevel: "fetch-failed",
+      error: `Fetch failed with status ${response.status}`,
+      status: response.status,
+    };
+  }
+
+  const html = await response.text();
+  const $ = cheerio.load(html);
+
+  return extractRecipeFromPage($, url, response.url || url);
+}
 
 async function loadAndExtractRecipe(page, url) {
   await page.goto(url, {
