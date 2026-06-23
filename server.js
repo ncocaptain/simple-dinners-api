@@ -244,7 +244,7 @@ app.post("/import-text", async (request, reply) => {
         ? parsed.ingredients.join("\n")
         : "",
       instructions: Array.isArray(parsed.instructions)
-        ? parsed.instructionsjoin("\n")
+        ? parsed.instructions.join("\n")
         : "",
       photoUrl: "",
       slug: `${slugify(recipeName)}-${Date.now().toString().slice(-4)}`,
@@ -573,7 +573,7 @@ const isSocialSource = isSocialRecipeUrl(finalUrl) || isSocialRecipeUrl(sourceUr
       name: recipeName,
       ingredients: hasIngredients ? ingredients.join("\n") : "",
       instructions: hasInstructions
-        ? instructionsjoin("\n")
+        ? instructions.join("\n")
         : "Steps available at source link!",
       photoUrl: image,
       slug: `${slugify(recipeName)}-${Date.now().toString().slice(-4)}`,
@@ -734,12 +734,12 @@ const instructionCount = result.recipe.instructions
 
   if (cleanedIngredients.length > 0) {
     result.ingredients = cleanedIngredients;
-    result.recipe.ingredients = cleanedIngredients.join("\n")
+    result.recipe.ingredients = cleanedIngredients.join("\n");
   }
 
   if (cleanedInstructions.length > 0) {
     result.instructions = cleanedInstructions;
-    result.recipe.instructions = cleanedInstructions.join("\n")
+    result.recipe.instructions = cleanedInstructions.join("\n");
   }
 
   const cleanedEffort = normalizeEffort(cleanedRecipe.effort);
