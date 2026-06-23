@@ -52,6 +52,8 @@ console.log("Using Simple Dinners API importer:", {
       args: ["--no-sandbox", "--disable-setuid-sandbox"],
     });
 
+    const startedAt = Date.now();
+
     const context = await browser.newContext({
       userAgent:
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
@@ -76,6 +78,14 @@ console.log("Using Simple Dinners API importer:", {
 });
 
     const firstResult = await loadAndExtractRecipe(page, importUrl);
+
+    console.log("Recipe page extraction finished:", {
+  seconds: Math.round((Date.now() - startedAt) / 1000),
+  successLevel: firstResult?.successLevel,
+  name: firstResult?.name,
+  ingredientsCount: firstResult?.ingredients?.length || 0,
+  instructionsCount: firstResult?.instructions?.length || 0,
+});
 
     const shouldFollowLinkedRecipe =
       firstResult.success &&
@@ -108,6 +118,7 @@ console.log("Using Simple Dinners API importer:", {
 
       return await applyAiCleanupToResult(finalResult);
     }
+    
 
     return await applyAiCleanupToResult(firstResult);
   } catch (error) {
@@ -197,12 +208,12 @@ async function loadAndExtractRecipe(page, url) {
   });
 
   try {
-    await page.waitForLoadState("networkidle", { timeout: 8000 });
+    await page.waitForLoadState("load", { timeout: 5000 });
   } catch {
     // Some ad-heavy sites never fully go idle. That's okay.
   }
 
-  await page.waitForTimeout(1500);
+  await page.waitForTimeout(500);
 
   const html = await page.content();
   const finalUrl = page.url();
@@ -474,6 +485,8 @@ async function applyAiCleanupToResult(result) {
 
   if (!hasIngredients && !hasInstructions) return result;
 
+  const aiStartedAt = Date.now();
+
   const cleanedRecipe = await cleanRecipeWithAI(result.recipe);
 
   const cleanedIngredients = cleanedRecipe.ingredients
@@ -542,6 +555,12 @@ result.notes = cleanedNotes;
     ...(result.debug || {}),
     aiCleanupApplied: true,
   };
+
+  console.log("AI cleanup finished:", {
+  seconds: Math.round((Date.now() - aiStartedAt) / 1000),
+  ingredientsCount: cleanedIngredients.length,
+  instructionsCount: cleanedInstructions.length,
+});
 
   return result;
 }
