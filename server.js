@@ -241,7 +241,7 @@ app.post("/import-text", async (request, reply) => {
     const roughRecipe = {
       name: recipeName,
       ingredients: Array.isArray(parsed.ingredients)
-        ? parsed.ingredientsjoin("\n")
+        ? parsed.ingredients.join("\n")
         : "",
       instructions: Array.isArray(parsed.instructions)
         ? parsed.instructionsjoin("\n")
@@ -571,7 +571,7 @@ const isSocialSource = isSocialRecipeUrl(finalUrl) || isSocialRecipeUrl(sourceUr
 
     recipe: {
       name: recipeName,
-      ingredients: hasIngredients ? ingredientsjoin("\n") : "",
+      ingredients: hasIngredients ? ingredients.join("\n") : "",
       instructions: hasInstructions
         ? instructionsjoin("\n")
         : "Steps available at source link!",
