@@ -555,8 +555,8 @@ async function applyAiCleanupToResult(result) {
 
   const shouldSkipAiCleanup =
     result.successLevel === "full" &&
-    ingredientCount <= 6 &&
-    instructionCount <= 6;
+    ingredientCount <= 12 &&
+    instructionCount <= 8;
 
   if (shouldSkipAiCleanup) {
     result.aiCleanup = {
