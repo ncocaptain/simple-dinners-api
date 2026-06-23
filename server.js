@@ -34,27 +34,35 @@ app.get("/", async () => {
 app.post("/import-recipe", async (request, reply) => {
   const { url } = request.body || {};
 
-if (!url) {
-  return reply.code(400).send({ error: "URL required" });
-}
+  if (!url) {
+    return reply.code(400).send({ error: "URL required" });
+  }
 
-const importUrl = normalizeImportUrl(url);
-console.log("Using Simple Dinners API importer:", {
-  originalUrl: url,
-  importUrl,
-});
+  const importUrl = normalizeImportUrl(url);
+  const startedAt = Date.now();
+
+  console.log("Using Simple Dinners API importer:", {
+    originalUrl: url,
+    importUrl,
+  });
 
   let browser;
+  let context;
 
-  try {
+  // -----------------------------------------------------
+  // Playwright fallback setup
+  // Only launches if fast HTML extraction is weak/blocked.
+  // -----------------------------------------------------
+
+  async function ensureBrowserContext() {
+    if (context) return context;
+
     browser = await chromium.launch({
       headless: true,
       args: ["--no-sandbox", "--disable-setuid-sandbox"],
     });
 
-    const startedAt = Date.now();
-
-    const context = await browser.newContext({
+    context = await browser.newContext({
       userAgent:
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
       viewport: { width: 1365, height: 900 },
@@ -66,56 +74,86 @@ console.log("Using Simple Dinners API importer:", {
       },
     });
 
+    return context;
+  }
+
+  async function runPlaywrightExtraction(targetUrl) {
+    const activeContext = await ensureBrowserContext();
+    const page = await activeContext.newPage();
+
+    try {
+      await page.route("**/*", (route) => {
+        const resourceType = route.request().resourceType();
+
+        if (["image", "font", "media"].includes(resourceType)) {
+          return route.abort();
+        }
+
+        return route.continue();
+      });
+
+      return await loadAndExtractRecipe(page, targetUrl);
+    } finally {
+      try {
+        await page.close();
+      } catch {
+        // Ignore page close errors.
+      }
+    }
+  }
+
+  try {
+    // -----------------------------------------------------
+    // Pass 1: Fast raw HTML extraction
+    // This avoids Playwright entirely when JSON-LD recipe data is already in the page.
+    // -----------------------------------------------------
+
     let firstResult = null;
 
-try {
-  firstResult = await fetchAndExtractRecipe(importUrl);
+    try {
+      firstResult = await fetchAndExtractRecipe(importUrl);
 
-  console.log("Fast HTML extraction finished:", {
-    success: firstResult?.success,
-    successLevel: firstResult?.successLevel,
-    name: firstResult?.name,
-    ingredientsCount: firstResult?.ingredients?.length || 0,
-    instructionsCount: firstResult?.instructions?.length || 0,
-  });
-} catch (fetchError) {
-  console.log("Fast HTML extraction failed:", {
-    error:
-      fetchError instanceof Error
-        ? fetchError.message
-        : "Unknown fetch error",
-  });
-}
-
-const fastImportWorked =
-  firstResult?.success &&
-  firstResult?.recipe &&
-  firstResult.successLevel !== "metadata-only" &&
-  firstResult.successLevel !== "social-metadata-only";
-
-if (!fastImportWorked) {
-  const page = await context.newPage();
-
-  await page.route("**/*", (route) => {
-    const resourceType = route.request().resourceType();
-
-    if (["image", "font", "media"].includes(resourceType)) {
-      return route.abort();
+      console.log("Fast HTML extraction finished:", {
+        success: firstResult?.success,
+        successLevel: firstResult?.successLevel,
+        name: firstResult?.name,
+        ingredientsCount: firstResult?.ingredients?.length || 0,
+        instructionsCount: firstResult?.instructions?.length || 0,
+      });
+    } catch (fetchError) {
+      console.log("Fast HTML extraction failed:", {
+        error:
+          fetchError instanceof Error
+            ? fetchError.message
+            : "Unknown fetch error",
+      });
     }
 
-    return route.continue();
-  });
+    // -----------------------------------------------------
+    // Pass 2: Playwright fallback
+    // Used only when fast extraction fails, is blocked, or returns weak metadata.
+    // -----------------------------------------------------
 
-  firstResult = await loadAndExtractRecipe(page, importUrl);
-}
+    if (!shouldUseFastImportResult(firstResult)) {
+      firstResult = await runPlaywrightExtraction(importUrl);
+    }
+
+    if (!firstResult) {
+      throw new Error("Recipe import did not return a result");
+    }
 
     console.log("Recipe page extraction finished:", {
-  seconds: Math.round((Date.now() - startedAt) / 1000),
-  successLevel: firstResult?.successLevel,
-  name: firstResult?.name,
-  ingredientsCount: firstResult?.ingredients?.length || 0,
-  instructionsCount: firstResult?.instructions?.length || 0,
-});
+      seconds: Math.round((Date.now() - startedAt) / 1000),
+      successLevel: firstResult?.successLevel,
+      name: firstResult?.name,
+      ingredientsCount: firstResult?.ingredients?.length || 0,
+      instructionsCount: firstResult?.instructions?.length || 0,
+    });
+
+    // -----------------------------------------------------
+    // Linked recipe follow-up
+    // Example: Allrecipes article pages that link to the real recipe page.
+    // -----------------------------------------------------
 
     const shouldFollowLinkedRecipe =
       firstResult.success &&
@@ -123,23 +161,43 @@ if (!fastImportWorked) {
       (firstResult.ingredients || []).length === 0;
 
     if (shouldFollowLinkedRecipe) {
-      const linkedResult = await loadAndExtractRecipe(
-        page,
-        firstResult.linkedRecipeUrl
-      );
+      let linkedResult = null;
+
+      try {
+        linkedResult = await fetchAndExtractRecipe(firstResult.linkedRecipeUrl);
+
+        console.log("Linked fast HTML extraction finished:", {
+          success: linkedResult?.success,
+          successLevel: linkedResult?.successLevel,
+          name: linkedResult?.name,
+          ingredientsCount: linkedResult?.ingredients?.length || 0,
+          instructionsCount: linkedResult?.instructions?.length || 0,
+        });
+      } catch (fetchError) {
+        console.log("Linked fast HTML extraction failed:", {
+          error:
+            fetchError instanceof Error
+              ? fetchError.message
+              : "Unknown fetch error",
+        });
+      }
+
+      if (!shouldUseFastImportResult(linkedResult)) {
+        linkedResult = await runPlaywrightExtraction(firstResult.linkedRecipeUrl);
+      }
 
       const finalResult = {
         ...linkedResult,
         sourceUrl: url,
         importedFromUrl: firstResult.linkedRecipeUrl,
-        recipe: linkedResult.recipe
+        recipe: linkedResult?.recipe
           ? {
               ...linkedResult.recipe,
               sourceUrl: firstResult.linkedRecipeUrl,
             }
           : null,
         debug: {
-          ...linkedResult.debug,
+          ...(linkedResult?.debug || {}),
           followedLinkedRecipe: true,
           originalUrl: url,
           firstPageName: firstResult.name,
@@ -148,7 +206,6 @@ if (!fastImportWorked) {
 
       return await applyAiCleanupToResult(finalResult);
     }
-    
 
     return await applyAiCleanupToResult(firstResult);
   } catch (error) {
@@ -184,10 +241,10 @@ app.post("/import-text", async (request, reply) => {
     const roughRecipe = {
       name: recipeName,
       ingredients: Array.isArray(parsed.ingredients)
-        ? parsed.ingredients.join("\n")
+        ? parsed.ingredientsjoin("\n")
         : "",
       instructions: Array.isArray(parsed.instructions)
-        ? parsed.instructions.join("\n")
+        ? parsed.instructionsjoin("\n")
         : "",
       photoUrl: "",
       slug: `${slugify(recipeName)}-${Date.now().toString().slice(-4)}`,
@@ -229,6 +286,7 @@ app.post("/import-text", async (request, reply) => {
 
 // =====================================================
 // Page loading + extraction pipeline
+// Fast HTML first, Playwright fallback second
 // =====================================================
 
 async function fetchAndExtractRecipe(url) {
@@ -237,7 +295,7 @@ async function fetchAndExtractRecipe(url) {
     headers: {
       "User-Agent":
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-      "Accept":
+      Accept:
         "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
       "Accept-Language": "en-US,en;q=0.9",
       "Upgrade-Insecure-Requests": "1",
@@ -259,6 +317,17 @@ async function fetchAndExtractRecipe(url) {
   return extractRecipeFromPage($, url, response.url || url);
 }
 
+function shouldUseFastImportResult(result) {
+  return (
+    result?.success &&
+    result?.recipe &&
+    result.successLevel !== "metadata-only" &&
+    result.successLevel !== "social-metadata-only" &&
+    result.successLevel !== "blocked" &&
+    result.successLevel !== "fetch-failed"
+  );
+}
+
 async function loadAndExtractRecipe(page, url) {
   await page.goto(url, {
     waitUntil: "domcontentloaded",
@@ -268,7 +337,7 @@ async function loadAndExtractRecipe(page, url) {
   try {
     await page.waitForLoadState("load", { timeout: 5000 });
   } catch {
-    // Some ad-heavy sites never fully go idle. That's okay.
+    // Some ad-heavy sites never fully load. That's okay.
   }
 
   await page.waitForTimeout(500);
@@ -279,6 +348,11 @@ async function loadAndExtractRecipe(page, url) {
 
   return extractRecipeFromPage($, url, finalUrl);
 }
+
+// =====================================================
+// URL cleanup helpers
+// Handles shared links, redirects, tracking params, and social URLs
+// =====================================================
 
 function normalizeImportUrl(rawUrl) {
   const value = String(rawUrl || "").trim();
@@ -497,9 +571,9 @@ const isSocialSource = isSocialRecipeUrl(finalUrl) || isSocialRecipeUrl(sourceUr
 
     recipe: {
       name: recipeName,
-      ingredients: hasIngredients ? ingredients.join("\n") : "",
+      ingredients: hasIngredients ? ingredientsjoin("\n") : "",
       instructions: hasInstructions
-        ? instructions.join("\n")
+        ? instructionsjoin("\n")
         : "Steps available at source link!",
       photoUrl: image,
       slug: `${slugify(recipeName)}-${Date.now().toString().slice(-4)}`,
@@ -524,6 +598,36 @@ isSocialSource,
   };
 }
 
+function instructionsMentionEnoughIngredients(ingredientsText, instructionsText) {
+  const ingredientWords = String(ingredientsText || "")
+    .toLowerCase()
+    .split("\n")
+    .flatMap((line) =>
+      line
+        .replace(/\([^)]*\)/g, " ")
+        .replace(/\d+\/\d+|\d+(\.\d+)?/g, " ")
+        .replace(
+          /\b(cup|cups|tbsp|tablespoons?|tsp|teaspoons?|lb|lbs|pound|pounds|oz|ounce|ounces|can|cans|jar|jars|package|packages|small|medium|large|fresh|dried|chopped|minced|sliced|diced|to|taste|for|with|and|the)\b/g,
+          " "
+        )
+        .replace(/[^a-z\s]/g, " ")
+        .split(/\s+/)
+    )
+    .map((word) => word.trim())
+    .filter((word) => word.length > 3);
+
+  const uniqueWords = Array.from(new Set(ingredientWords)).slice(0, 20);
+  const instructions = String(instructionsText || "").toLowerCase();
+
+  if (uniqueWords.length === 0) return false;
+
+  const matchedCount = uniqueWords.filter((word) =>
+    instructions.includes(word)
+  ).length;
+
+  return matchedCount >= Math.min(4, Math.ceil(uniqueWords.length * 0.35));
+}
+
 // =====================================================
 // AI cleanup result wrapper
 // Runs only after final import / linked recipe follow is complete
@@ -541,22 +645,34 @@ async function applyAiCleanupToResult(result) {
     result.recipe.instructions.trim().length > 0 &&
     result.recipe.instructions !== "Steps available at source link!";
 
-    if (!hasIngredients && !hasInstructions) return result;
+  if (!hasIngredients && !hasInstructions) return result;
 
   const ingredientCount = result.recipe.ingredients
-    .split("\n")
-    .map((line) => line.trim())
-    .filter(Boolean).length;
+  .split("\n")
+  .map((line) => line.trim())
+  .filter(Boolean).length;
 
-  const instructionCount = result.recipe.instructions
-    .split("\n")
-    .map((line) => line.trim())
-    .filter(Boolean).length;
+const instructionCount = result.recipe.instructions
+  .split("\n")
+  .map((line) => line.trim())
+  .filter(Boolean).length;
+
+  const instructionsAlreadyUseful = instructionsMentionEnoughIngredients(
+    result.recipe.ingredients,
+    result.recipe.instructions
+  );
+
+  // -----------------------------------------------------
+  // Speed rule:
+  // Skip AI only for small, complete imports that already mention enough ingredients.
+  // This keeps simple recipes fast while still cleaning vague instructions.
+  // -----------------------------------------------------
 
   const shouldSkipAiCleanup =
     result.successLevel === "full" &&
     ingredientCount <= 12 &&
-    instructionCount <= 8;
+    instructionCount <= 8 &&
+    instructionsAlreadyUseful;
 
   if (shouldSkipAiCleanup) {
     result.aiCleanup = {
@@ -565,17 +681,20 @@ async function applyAiCleanupToResult(result) {
       reason: "simple-full-import",
       ingredientsCount: ingredientCount,
       instructionsCount: instructionCount,
+      instructionsAlreadyUseful,
     };
 
     result.debug = {
       ...(result.debug || {}),
       aiCleanupSkipped: true,
+      instructionsAlreadyUseful,
     };
 
     console.log("AI cleanup skipped:", {
       reason: "simple-full-import",
       ingredientsCount: ingredientCount,
       instructionsCount: instructionCount,
+      instructionsAlreadyUseful,
     });
 
     return result;
@@ -586,77 +705,80 @@ async function applyAiCleanupToResult(result) {
   const cleanedRecipe = await cleanRecipeWithAI(result.recipe);
 
   const cleanedIngredients = cleanedRecipe.ingredients
-  .map(removeSecondaryMeasurements)
-  .map(cleanHtmlEntities)
-  .map(cleanText)
-  .map(fixBrokenCommonWords)
-  .flatMap(splitEachIngredient)
-  .filter(Boolean);
+    .map(removeSecondaryMeasurements)
+    .map(cleanHtmlEntities)
+    .map(cleanText)
+    .map(fixBrokenCommonWords)
+    .flatMap(splitEachIngredient)
+    .filter(Boolean);
 
   const cleanedInstructions = splitLongInstructionSteps(cleanedRecipe.instructions)
-  .map(removeSecondaryMeasurements)
-  .map(cleanHtmlEntities)
-  .map(cleanText)
-  .map(normalizeCookingText)
-  .map(fixBrokenCommonWords)
-  .filter(Boolean)
-  .filter(step =>
-    !/^pro tip:/i.test(step) &&
-    !/^this soup freezes/i.test(step) &&
-    !/^this allows leftover/i.test(step) &&
-    !/^this will yield/i.test(step) &&
-    !/^refer to package/i.test(step) &&
-    !/^\(?refer to package/i.test(step) &&
-    !/^see this video/i.test(step) &&
-    !/^any rice stuck/i.test(step) &&
-    !/^note: other varieties of rice/i.test(step)
-  );
+    .map(removeSecondaryMeasurements)
+    .map(cleanHtmlEntities)
+    .map(cleanText)
+    .map(normalizeCookingText)
+    .map(fixBrokenCommonWords)
+    .filter(Boolean)
+    .filter(
+      (step) =>
+        !/^pro tip:/i.test(step) &&
+        !/^this soup freezes/i.test(step) &&
+        !/^this allows leftover/i.test(step) &&
+        !/^this will yield/i.test(step) &&
+        !/^refer to package/i.test(step) &&
+        !/^\(?refer to package/i.test(step) &&
+        !/^see this video/i.test(step) &&
+        !/^any rice stuck/i.test(step) &&
+        !/^note: other varieties of rice/i.test(step)
+    );
 
   if (cleanedIngredients.length > 0) {
     result.ingredients = cleanedIngredients;
-    result.recipe.ingredients = cleanedIngredients.join("\n");
+    result.recipe.ingredients = cleanedIngredients.join("\n")
   }
 
   if (cleanedInstructions.length > 0) {
     result.instructions = cleanedInstructions;
-    result.recipe.instructions = cleanedInstructions.join("\n");
+    result.recipe.instructions = cleanedInstructions.join("\n")
   }
 
   const cleanedEffort = normalizeEffort(cleanedRecipe.effort);
-const cleanedTags = normalizeTags(cleanedRecipe.tags);
-const cleanedIsVegetarian = normalizeBoolean(cleanedRecipe.isVegetarian);
-const cleanedNotes = normalizeRecipeNotes(cleanedRecipe.notes);
+  const cleanedTags = normalizeTags(cleanedRecipe.tags);
+  const cleanedIsVegetarian = normalizeBoolean(cleanedRecipe.isVegetarian);
+  const cleanedNotes = normalizeRecipeNotes(cleanedRecipe.notes);
 
-result.recipe.effort = cleanedEffort;
-result.recipe.tags = cleanedTags;
-result.recipe.isVegetarian = cleanedIsVegetarian;
+  result.recipe.effort = cleanedEffort;
+  result.recipe.tags = cleanedTags;
+  result.recipe.isVegetarian = cleanedIsVegetarian;
 
-if (cleanedNotes) {
-  result.recipe.notes = cleanedNotes;
-}
+  if (cleanedNotes) {
+    result.recipe.notes = cleanedNotes;
+  }
 
-result.effort = cleanedEffort;
-result.tags = cleanedTags;
-result.isVegetarian = cleanedIsVegetarian;
-result.notes = cleanedNotes;
+  result.effort = cleanedEffort;
+  result.tags = cleanedTags;
+  result.isVegetarian = cleanedIsVegetarian;
+  result.notes = cleanedNotes;
 
   result.aiCleanup = {
-  enabled: true,
-  ingredientsCount: cleanedIngredients.length,
-  instructionsCount: cleanedInstructions.length,
-  metadataDetected: true,
-};
+    enabled: true,
+    ingredientsCount: cleanedIngredients.length,
+    instructionsCount: cleanedInstructions.length,
+    metadataDetected: true,
+  };
 
   result.debug = {
     ...(result.debug || {}),
     aiCleanupApplied: true,
+    instructionsAlreadyUseful,
   };
 
   console.log("AI cleanup finished:", {
-  seconds: Math.round((Date.now() - aiStartedAt) / 1000),
-  ingredientsCount: cleanedIngredients.length,
-  instructionsCount: cleanedInstructions.length,
-});
+    seconds: Math.round((Date.now() - aiStartedAt) / 1000),
+    ingredientsCount: cleanedIngredients.length,
+    instructionsCount: cleanedInstructions.length,
+    instructionsAlreadyUseful,
+  });
 
   return result;
 }
