@@ -221,6 +221,49 @@ app.post("/import-recipe", async (request, reply) => {
   }
 });
 
+
+// =====================================================
+// POST /import-jsonld
+// Device-assisted import endpoint
+// Receives JSON-LD extracted by the user's device/WebView
+// =====================================================
+
+app.post("/import-jsonld", async (request, reply) => {
+  const { url, jsonLd } = request.body || {};
+
+  if (!url) {
+    return reply.code(400).send({ error: "URL required" });
+  }
+
+  if (!jsonLd || !String(jsonLd).trim()) {
+    return reply.code(400).send({ error: "JSON-LD required" });
+  }
+
+  try {
+    const importUrl = normalizeImportUrl(url);
+    const result = extractRecipeFromJsonLd(String(jsonLd), importUrl);
+
+    console.log("Device JSON-LD import finished:", {
+      success: result?.success,
+      successLevel: result?.successLevel,
+      name: result?.name,
+      ingredientsCount: result?.ingredients?.length || 0,
+      instructionsCount: result?.instructions?.length || 0,
+      sourceUrl: importUrl,
+    });
+
+    return await applyAiCleanupToResult(result);
+  } catch (error) {
+    request.log.error(error);
+
+    return reply.code(500).send({
+      success: false,
+      successLevel: "error",
+      error: error instanceof Error ? error.message : "JSON-LD import failed",
+    });
+  }
+});
+
 // =====================================================
 // POST /import-text
 // Paste raw recipe text and normalize into recipe format
@@ -416,6 +459,105 @@ function isSocialRecipeUrl(url) {
     value.includes("tiktok.com") ||
     value.includes("pinterest.com")
   );
+}
+
+
+function extractRecipeFromJsonLd(jsonLdText, sourceUrl) {
+  let recipe = null;
+
+  const rawText = String(jsonLdText || "").trim();
+
+  // The Android/WebView version should normally send plain JSON-LD text.
+  // This also tolerates full <script> tags or multiple JSON-LD blocks joined together.
+  const candidates = rawText
+    .split(/(?=<script[^>]*application\/ld\+json)/i)
+    .map((chunk) =>
+      chunk
+        .replace(/<script[^>]*application\/ld\+json[^>]*>/gi, "")
+        .replace(/<\/script>/gi, "")
+        .trim()
+    )
+    .filter(Boolean);
+
+  const blocks = candidates.length > 0 ? candidates : [rawText];
+
+  for (const block of blocks) {
+    if (recipe) break;
+
+    try {
+      const parsed = JSON.parse(block);
+      const found = findRecipe(parsed);
+      if (found) recipe = found;
+    } catch {
+      // Ignore invalid or non-recipe JSON-LD blocks.
+    }
+  }
+
+  const recipeName = cleanHtmlEntities(
+    cleanText(recipe?.name || "Imported Recipe")
+  );
+
+  const ingredients = Array.isArray(recipe?.recipeIngredient)
+    ? recipe.recipeIngredient
+        .map(cleanHtmlEntities)
+        .map(cleanText)
+        .filter(Boolean)
+    : [];
+
+  const instructions = extractInstructions(recipe?.recipeInstructions)
+    .map(cleanHtmlEntities)
+    .map(cleanText)
+    .filter(Boolean);
+
+  const image = extractImage(recipe?.image);
+
+  const hasIngredients = ingredients.length > 0;
+  const hasInstructions = instructions.length > 0;
+
+  const successLevel =
+    hasIngredients && hasInstructions
+      ? "full"
+      : hasIngredients || hasInstructions
+      ? "partial"
+      : "metadata-only";
+
+  return {
+    success: true,
+    successLevel,
+    debugVersion: "simple-dinners-api-jsonld-import-v1",
+
+    sourceUrl,
+    importedFromUrl: sourceUrl,
+    name: recipeName,
+    ingredients,
+    instructions,
+    image,
+    linkedRecipeUrl: "",
+
+    recipe: {
+      name: recipeName,
+      ingredients: hasIngredients ? ingredients.join("\n") : "",
+      instructions: hasInstructions
+        ? instructions.join("\n")
+        : "Steps available at source link!",
+      photoUrl: image,
+      slug: `${slugify(recipeName)}-${Date.now().toString().slice(-4)}`,
+      sourceUrl,
+      effort: "normal",
+      importStatus: successLevel,
+      fallbackText: !hasIngredients && !hasInstructions
+        ? [recipeName, sourceUrl].filter(Boolean).join("\n\n")
+        : "",
+    },
+
+    debug: {
+      jsonLdImport: true,
+      foundRecipe: !!recipe,
+      ingredientsCount: ingredients.length,
+      instructionsCount: instructions.length,
+      finalUrl: sourceUrl,
+    },
+  };
 }
 
 function extractRecipeFromPage($, sourceUrl, finalUrl) {
