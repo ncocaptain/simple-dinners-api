@@ -13,6 +13,15 @@ import OpenAI from "openai";
 // =====================================================
 
 const app = Fastify({ logger: true });
+app.addHook("onRequest", async (request, reply) => {
+  reply.header("Access-Control-Allow-Origin", "*");
+  reply.header("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
+  reply.header("Access-Control-Allow-Headers", "Content-Type");
+});
+
+app.options("/*", async (request, reply) => {
+  return reply.code(204).send();
+});
 
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
