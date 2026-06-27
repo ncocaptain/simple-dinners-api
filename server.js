@@ -484,8 +484,10 @@ function extractRecipeFromJsonLd(jsonLdText, sourceUrl) {
     .replace(/\\"/g, '"')
     .replace(/\\\\/g, "\\");
 
+    const safeJsonText = normalizedText.replace(/\\(?!["\\/bfnrtu])/g, "\\\\");
+
   const scriptMatches = Array.from(
-    normalizedText.matchAll(
+  safeJsonText.matchAll(
       /<script[^>]*type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi
     )
   ).map((match) => match[1].trim());
@@ -587,8 +589,8 @@ console.log(
       instructionsCount: instructions.length,
       finalUrl: sourceUrl,
       scriptBlocks: blocks.length,
-      hasRecipeText: normalizedText.includes('"@type":"Recipe"'),
-      recipeTextIndex: normalizedText.indexOf('"@type":"Recipe"'),
+      hasRecipeText: safeJsonText.includes('"@type":"Recipe"'),
+recipeTextIndex: safeJsonText.indexOf('"@type":"Recipe"'),
     },
   };
 }
