@@ -521,10 +521,13 @@ function extractRecipeFromJsonLd(jsonLdText, sourceUrl) {
     if (match) {
       const pos = Number(match[1]);
 
-      console.log(
-        "JSON around error:\n",
-        cleanedBlock.slice(Math.max(0, pos - 150), pos + 150)
-      );
+      const snippet = cleanedBlock.slice(
+  Math.max(0, pos - 150),
+  pos + 150
+);
+
+console.log("JSON around error:");
+console.log(JSON.stringify(snippet));
     }
   }
 }
