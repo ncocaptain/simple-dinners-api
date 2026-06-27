@@ -1046,7 +1046,17 @@ function findRecipe(value) {
 
   const type = value["@type"];
 
-  if (type === "Recipe" || (Array.isArray(type) && type.includes("Recipe"))) {
+  const isRecipeType =
+    type === "Recipe" ||
+    (Array.isArray(type) && type.some((t) => String(t).toLowerCase() === "recipe"));
+
+  const looksLikeRecipe =
+    value.recipeIngredient ||
+    value.recipeInstructions ||
+    value.cookTime ||
+    value.prepTime;
+
+  if (isRecipeType || looksLikeRecipe) {
     return value;
   }
 
@@ -1059,6 +1069,7 @@ function findRecipe(value) {
 
   for (const key of Object.keys(value)) {
     const child = value[key];
+
     if (child && typeof child === "object") {
       const found = findRecipe(child);
       if (found) return found;
