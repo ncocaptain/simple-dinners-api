@@ -476,29 +476,42 @@ function extractRecipeFromJsonLd(jsonLdText, sourceUrl) {
 
   const rawText = String(jsonLdText || "").trim();
 
-  // The Android/WebView version should normally send plain JSON-LD text.
-  // This also tolerates full <script> tags or multiple JSON-LD blocks joined together.
-  const candidates = rawText
-    .split(/(?=<script[^>]*application\/ld\+json)/i)
-    .map((chunk) =>
-      chunk
-        .replace(/<script[^>]*application\/ld\+json[^>]*>/gi, "")
-        .replace(/<\/script>/gi, "")
-        .trim()
-    )
-    .filter(Boolean);
+  const normalizedText = rawText
+    .replace(/\\u003C/g, "<")
+    .replace(/\\u003E/g, ">")
+    .replace(/\\u0026/g, "&")
+    .replace(/\\\//g, "/")
+    .replace(/\\"/g, '"')
+    .replace(/\\\\/g, "\\");
 
-  const blocks = candidates.length > 0 ? candidates : [rawText];
+  const scriptMatches = Array.from(
+    normalizedText.matchAll(
+      /<script[^>]*type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi
+    )
+  ).map((match) => match[1].trim());
+
+  const blocks = scriptMatches.length > 0 ? scriptMatches : [normalizedText];
 
   for (const block of blocks) {
     if (recipe) break;
 
+    const cleanedBlock = block
+      .replace(/^<!--/, "")
+      .replace(/-->$/, "")
+      .trim();
+
+    if (!cleanedBlock) continue;
+
     try {
-      const parsed = JSON.parse(block);
+      const parsed = JSON.parse(cleanedBlock);
       const found = findRecipe(parsed);
-      if (found) recipe = found;
-    } catch {
-      // Ignore invalid or non-recipe JSON-LD blocks.
+
+      if (found) {
+        recipe = found;
+        console.log("JSON-LD recipe found:", recipe.name || "Unnamed Recipe");
+      }
+    } catch (error) {
+      console.log("JSON-LD block failed to parse:", cleanedBlock.slice(0, 120));
     }
   }
 
@@ -533,7 +546,7 @@ function extractRecipeFromJsonLd(jsonLdText, sourceUrl) {
   return {
     success: true,
     successLevel,
-    debugVersion: "simple-dinners-api-jsonld-import-v1",
+    debugVersion: "simple-dinners-api-jsonld-import-v2",
 
     sourceUrl,
     importedFromUrl: sourceUrl,
