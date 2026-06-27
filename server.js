@@ -513,16 +513,21 @@ function extractRecipeFromJsonLd(jsonLdText, sourceUrl) {
         console.log("JSON-LD recipe found:", recipe.name || "Unnamed Recipe");
       }
     } catch (error) {
-      console.log("JSON parse error:", error.message);
+  console.log("JSON parse error:", error.message);
 
-console.log(
-  "Around Recipe:",
-  cleanedBlock.slice(
-    Math.max(0, cleanedBlock.indexOf('"@type":"Recipe"') - 200),
-    cleanedBlock.indexOf('"@type":"Recipe"') + 600
-  )
-);
+  if (error.message.includes("position")) {
+    const match = error.message.match(/position (\d+)/);
+
+    if (match) {
+      const pos = Number(match[1]);
+
+      console.log(
+        "JSON around error:\n",
+        cleanedBlock.slice(Math.max(0, pos - 150), pos + 150)
+      );
     }
+  }
+}
   }
 
   const recipeName = cleanHtmlEntities(
