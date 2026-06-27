@@ -546,7 +546,7 @@ function extractRecipeFromJsonLd(jsonLdText, sourceUrl) {
   return {
     success: true,
     successLevel,
-    debugVersion: "simple-dinners-api-jsonld-import-v2",
+    debugVersion: "simple-dinners-api-jsonld-import-v3",
 
     sourceUrl,
     importedFromUrl: sourceUrl,
@@ -578,6 +578,9 @@ function extractRecipeFromJsonLd(jsonLdText, sourceUrl) {
       ingredientsCount: ingredients.length,
       instructionsCount: instructions.length,
       finalUrl: sourceUrl,
+      scriptBlocks: blocks.length,
+      hasRecipeText: normalizedText.includes('"@type":"Recipe"'),
+      recipeTextIndex: normalizedText.indexOf('"@type":"Recipe"'),
     },
   };
 }
