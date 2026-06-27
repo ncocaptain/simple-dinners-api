@@ -511,7 +511,15 @@ function extractRecipeFromJsonLd(jsonLdText, sourceUrl) {
         console.log("JSON-LD recipe found:", recipe.name || "Unnamed Recipe");
       }
     } catch (error) {
-      console.log("JSON-LD block failed to parse:", cleanedBlock.slice(0, 120));
+      console.log("JSON parse error:", error.message);
+
+console.log(
+  "Around Recipe:",
+  cleanedBlock.slice(
+    Math.max(0, cleanedBlock.indexOf('"@type":"Recipe"') - 200),
+    cleanedBlock.indexOf('"@type":"Recipe"') + 600
+  )
+);
     }
   }
 
