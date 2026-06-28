@@ -552,10 +552,10 @@ try {
 
   try {
     if (recipeObjectText) {
-      const safeRecipeObjectText = recipeObjectText.replace(
-  /[\u0000-\u001F]+/g,
-  " "
-);
+      
+      const safeRecipeObjectText = recipeObjectText
+  .replace(/[\u0000-\u001F]+/g, " ")
+  .replace(/\\([^"\\/bfnrtu])/g, "$1");
 
 recipe = JSON.parse(safeRecipeObjectText);
       console.log("Recipe parsed directly:", recipe?.name || "Unnamed Recipe");
