@@ -621,157 +621,128 @@ function extractRecipeFromJsonLd(jsonLdText, sourceUrl) {
   };
 }
 
-function extractRecipeFromPage($, sourceUrl, finalUrl) {
-  if (isBlockedPage($, finalUrl)) {
-    const pageTitle = cleanHtmlEntities(cleanText($("title").text()));
+function extractRecipeFromJsonLd(jsonLdText, sourceUrl) {
+  const rawText = String(jsonLdText || "").trim();
 
-    return {
-      success: false,
-      successLevel: "blocked",
-      debugVersion: "simple-dinners-api-importer-v1",
-      sourceUrl,
-      importedFromUrl: finalUrl,
-      name: "",
-      ingredients: [],
-      instructions: [],
-      image: "",
-      linkedRecipeUrl: "",
-      recipe: null,
-      error:
-        "This site blocked the recipe importer. Try another link or add the recipe manually.",
-      debug: {
-        blocked: true,
-        finalUrl,
-        pageTitle,
-      },
-    };
-  }
+  const normalizedText = rawText
+    .replace(/\\u003C/g, "<")
+    .replace(/\\u003E/g, ">")
+    .replace(/\\u0026/g, "&")
+    .replace(/\\\//g, "/");
 
   let recipe = null;
 
-  $("script[type='application/ld+json']").each((_, el) => {
-    if (recipe) return;
+  try {
+    const parsed = JSON.parse(normalizedText);
+    recipe = findRecipe(parsed);
+  } catch {
+    // Fall back to direct object extraction below.
+  }
+
+  function extractRecipeObjectText(text) {
+    const recipeIndex = text.indexOf('"@type":"Recipe"');
+    if (recipeIndex < 0) return "";
+
+    let start = -1;
+    let depth = 0;
+    let inString = false;
+    let escaped = false;
+
+    for (let i = recipeIndex; i >= 0; i--) {
+      if (text[i] === "{") {
+        start = i;
+        break;
+      }
+    }
+
+    if (start < 0) return "";
+
+    for (let i = start; i < text.length; i++) {
+      const char = text[i];
+
+      if (escaped) {
+        escaped = false;
+        continue;
+      }
+
+      if (char === "\\") {
+        escaped = true;
+        continue;
+      }
+
+      if (char === '"') {
+        inString = !inString;
+        continue;
+      }
+
+      if (inString) continue;
+
+      if (char === "{") depth++;
+      if (char === "}") depth--;
+
+      if (depth === 0) {
+        return text.slice(start, i + 1);
+      }
+    }
+
+    return "";
+  }
+
+  if (!recipe) {
+    const recipeObjectText = extractRecipeObjectText(normalizedText);
 
     try {
-      const raw = $(el).text();
-      const parsed = JSON.parse(raw);
-      const found = findRecipe(parsed);
-      if (found) recipe = found;
+      if (recipeObjectText) {
+        const safeRecipeObjectText = recipeObjectText
+          .replace(/[\u0000-\u001F]+/g, " ")
+          .replace(/\\([^"\\/bfnrtu])/g, "$1");
+
+        recipe = JSON.parse(safeRecipeObjectText);
+      }
     } catch {
-      // Ignore invalid JSON-LD blocks
+      recipe = null;
     }
-  });
+  }
 
-  const rawName =
-    recipe?.name ||
-    $("meta[property='og:title']").attr("content") ||
-    $("title").text() ||
-    "Imported Recipe";
+  const recipeName = cleanHtmlEntities(
+    cleanText(recipe?.name || recipe?.headline || "Imported Recipe")
+  );
 
-  const recipeName = cleanHtmlEntities(cleanText(rawName));
-
-  let ingredients = Array.isArray(recipe?.recipeIngredient)
-    ? recipe.recipeIngredient.map(cleanText).filter(Boolean)
+  const ingredients = Array.isArray(recipe?.recipeIngredient)
+    ? recipe.recipeIngredient
+        .map(cleanHtmlEntities)
+        .map(cleanText)
+        .filter(Boolean)
     : [];
 
-  let instructions = extractInstructions(recipe?.recipeInstructions);
+  const instructions = extractInstructions(recipe?.recipeInstructions)
+    .map(cleanHtmlEntities)
+    .map(cleanText)
+    .filter(Boolean);
 
-  if (ingredients.length === 0) {
-    if (finalUrl.includes("natashaskitchen.com")) {
-      ingredients = extractNatashaIngredients($);
-    }
-
-    if (ingredients.length === 0) {
-      ingredients = extractBySelectors($, [
-        "[data-ingredient-name='true']",
-        ".mntl-structured-ingredients__list-item",
-        ".ingredients-item-name",
-        "li[class*='ingredient']",
-      ]);
-    }
-  }
-
-  if (instructions.length === 0) {
-    if (finalUrl.includes("natashaskitchen.com")) {
-      instructions = extractNatashaInstructions($);
-    }
-
-    if (instructions.length === 0) {
-      instructions = extractBySelectors($, [
-  ".comp.mntl-sc-block.mntl-sc-block-html",
-  ".mntl-sc-block-group--LI",
-  "li[class*='instruction']",
-  "p[class*='instruction']",
-  "div[class*='direction']",
-])
-  .filter((line) =>
-    /mix|stir|cook|bake|heat|place|add|whisk|combine|pour|season|serve|remove|transfer|drain|spread|sprinkle|preheat/i.test(
-      line
-    )
-  )
-  .filter(
-    (step) =>
-      !/watch|video|subscribe|newsletter|follow|instagram|youtube/i.test(step)
-  )
-.filter(step =>
-  !/^pro tip:/i.test(step) &&
-  !/^this soup freezes/i.test(step) &&
-  !/^this will yield/i.test(step) &&
-  !/^refer to package/i.test(step)
-)
-      
-    }
-  }
-
-  ingredients = ingredients.map(cleanHtmlEntities).map(cleanText).filter(Boolean);
-  instructions = instructions.map(cleanHtmlEntities).map(cleanText).filter(Boolean);
-
-  const image =
-    extractImage(recipe?.image) ||
-    $("meta[property='og:image']").attr("content") ||
-    $("meta[name='twitter:image']").attr("content") ||
-    "";
-
-    const description = cleanHtmlEntities(
-  cleanText(
-    $("meta[property='og:description']").attr("content") ||
-      $("meta[name='description']").attr("content") ||
-      $("meta[name='twitter:description']").attr("content") ||
-      ""
-  )
-);
-
-const isSocialSource = isSocialRecipeUrl(finalUrl) || isSocialRecipeUrl(sourceUrl);
-
-  const linkedRecipeUrl = finalUrl.includes("allrecipes.com")
-    ? findAllrecipesRecipeLink($, finalUrl, recipeName)
-    : "";
+  const image = extractImage(recipe?.image);
 
   const hasIngredients = ingredients.length > 0;
   const hasInstructions = instructions.length > 0;
 
   const successLevel =
-  hasIngredients && hasInstructions
-    ? "full"
-    : hasIngredients || hasInstructions
-    ? "partial"
-    : isSocialSource
-    ? "social-metadata-only"
-    : "metadata-only";
+    hasIngredients && hasInstructions
+      ? "full"
+      : hasIngredients || hasInstructions
+      ? "partial"
+      : "metadata-only";
 
   return {
     success: true,
     successLevel,
-    debugVersion: "simple-dinners-api-importer-v1",
-
+    debugVersion: "simple-dinners-api-jsonld-import-v7",
     sourceUrl,
-    importedFromUrl: finalUrl,
+    importedFromUrl: sourceUrl,
     name: recipeName,
     ingredients,
     instructions,
     image,
-    linkedRecipeUrl,
-
+    linkedRecipeUrl: "",
     recipe: {
       name: recipeName,
       ingredients: hasIngredients ? ingredients.join("\n") : "",
@@ -780,23 +751,19 @@ const isSocialSource = isSocialRecipeUrl(finalUrl) || isSocialRecipeUrl(sourceUr
         : "Steps available at source link!",
       photoUrl: image,
       slug: `${slugify(recipeName)}-${Date.now().toString().slice(-4)}`,
-      sourceUrl: finalUrl,
+      sourceUrl,
       effort: "normal",
       importStatus: successLevel,
-      fallbackText:
-  !hasIngredients && !hasInstructions
-    ? [recipeName, description, finalUrl].filter(Boolean).join("\n\n")
-    : "",
+      fallbackText: !hasIngredients && !hasInstructions
+        ? [recipeName, sourceUrl].filter(Boolean).join("\n\n")
+        : "",
     },
-
     debug: {
+      jsonLdImport: true,
       foundRecipe: !!recipe,
       ingredientsCount: ingredients.length,
       instructionsCount: instructions.length,
-      finalUrl,
-      linkedRecipeUrl,
-      description,
-isSocialSource,
+      finalUrl: sourceUrl,
     },
   };
 }
