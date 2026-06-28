@@ -479,69 +479,66 @@ function extractRecipeFromJsonLd(jsonLdText, sourceUrl) {
   const normalizedText = rawText
     .replace(/\\u003C/g, "<")
     .replace(/\\u003E/g, ">")
-    .replace(/\\u0026/g, "&")
-    .replace(/\\\//g, "/")
-    .replace(/\\"/g, '"')
-    .replace(/\\\\/g, "\\");
+    .replace(/\\u0026/g, "&");
 
-    const safeJsonText = normalizedText.replace(/\\(?!["\\/bfnrtu])/g, "\\\\");
+  function extractObjectAt(text, startIndex) {
+    let depth = 0;
+    let inString = false;
+    let escaped = false;
 
-  const scriptMatches = Array.from(
-  safeJsonText.matchAll(
-      /<script[^>]*type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi
-    )
-  ).map((match) => match[1].trim());
+    for (let i = startIndex; i < text.length; i++) {
+      const char = text[i];
 
-  const blocks = scriptMatches.length > 0 ? scriptMatches : [normalizedText];
+      if (escaped) {
+        escaped = false;
+        continue;
+      }
 
-  for (const block of blocks) {
-    if (recipe) break;
+      if (char === "\\") {
+        escaped = true;
+        continue;
+      }
 
-    const cleanedBlock = block
-      .replace(/^<!--/, "")
-      .replace(/-->$/, "")
-      .trim();
+      if (char === '"') {
+        inString = !inString;
+        continue;
+      }
 
-    if (!cleanedBlock) continue;
+      if (inString) continue;
+
+      if (char === "{") depth++;
+      if (char === "}") depth--;
+
+      if (depth === 0) {
+        return text.slice(startIndex, i + 1);
+      }
+    }
+
+    return "";
+  }
+
+  const recipeIndex = normalizedText.indexOf('"@type":"Recipe"');
+
+  if (recipeIndex >= 0) {
+    const recipeStart = normalizedText.lastIndexOf("{", recipeIndex);
+    const recipeObjectText = extractObjectAt(normalizedText, recipeStart);
 
     try {
-      const parsed = JSON.parse(cleanedBlock);
-      const found = findRecipe(parsed);
-
-      if (found) {
-        recipe = found;
-        console.log("JSON-LD recipe found:", recipe.name || "Unnamed Recipe");
-      }
+      recipe = JSON.parse(recipeObjectText);
+      console.log("Recipe object parsed directly:", recipe?.name);
     } catch (error) {
-  console.log("JSON parse error:", error.message);
-
-  if (error.message.includes("position")) {
-    const match = error.message.match(/position (\d+)/);
-
-    if (match) {
-      const pos = Number(match[1]);
-
-      const snippet = cleanedBlock.slice(
-  Math.max(0, pos - 150),
-  pos + 150
-);
-
-console.log("JSON around error:");
-console.log(JSON.stringify(snippet));
+      console.log("Direct recipe parse failed:", error.message);
     }
   }
-}
+
+  if (!recipe) {
+    console.log("No recipe object found in JSON-LD text.");
   }
 
-  const recipeName = cleanHtmlEntities(
-    cleanText(recipe?.name || "Imported Recipe")
-  );
+  const recipeName = cleanHtmlEntities(cleanText(recipe?.name || "Imported Recipe"));
 
   const ingredients = Array.isArray(recipe?.recipeIngredient)
-    ? recipe.recipeIngredient
-        .map(cleanHtmlEntities)
-        .map(cleanText)
-        .filter(Boolean)
+    ? recipe.recipeIngredient.map(cleanHtmlEntities).map(cleanText).filter(Boolean)
     : [];
 
   const instructions = extractInstructions(recipe?.recipeInstructions)
@@ -564,8 +561,7 @@ console.log(JSON.stringify(snippet));
   return {
     success: true,
     successLevel,
-    debugVersion: "simple-dinners-api-jsonld-import-v3",
-
+    debugVersion: "simple-dinners-api-jsonld-import-v4",
     sourceUrl,
     importedFromUrl: sourceUrl,
     name: recipeName,
@@ -573,7 +569,6 @@ console.log(JSON.stringify(snippet));
     instructions,
     image,
     linkedRecipeUrl: "",
-
     recipe: {
       name: recipeName,
       ingredients: hasIngredients ? ingredients.join("\n") : "",
@@ -589,16 +584,14 @@ console.log(JSON.stringify(snippet));
         ? [recipeName, sourceUrl].filter(Boolean).join("\n\n")
         : "",
     },
-
     debug: {
       jsonLdImport: true,
       foundRecipe: !!recipe,
       ingredientsCount: ingredients.length,
       instructionsCount: instructions.length,
       finalUrl: sourceUrl,
-      scriptBlocks: blocks.length,
-      hasRecipeText: safeJsonText.includes('"@type":"Recipe"'),
-recipeTextIndex: safeJsonText.indexOf('"@type":"Recipe"'),
+      hasRecipeText: normalizedText.includes('"@type":"Recipe"'),
+      recipeTextIndex: recipeIndex,
     },
   };
 }
