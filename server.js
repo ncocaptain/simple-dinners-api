@@ -472,8 +472,6 @@ function isSocialRecipeUrl(url) {
 
 
 function extractRecipeFromJsonLd(jsonLdText, sourceUrl) {
-  let recipe = null;
-
   const rawText = String(jsonLdText || "").trim();
 
   const normalizedText = rawText
@@ -482,73 +480,72 @@ function extractRecipeFromJsonLd(jsonLdText, sourceUrl) {
     .replace(/\\u0026/g, "&")
     .replace(/\\\//g, "/");
 
-  function extractJsonObjects(text) {
-  const objects = [];
-  const stack = [];
-  let inString = false;
-  let escaped = false;
+  function extractRecipeObjectText(text) {
+    const recipeIndex = text.indexOf('"@type":"Recipe"');
+    if (recipeIndex < 0) return "";
 
-  for (let i = 0; i < text.length; i++) {
-    const char = text[i];
+    let start = -1;
+    let depth = 0;
+    let inString = false;
+    let escaped = false;
 
-    if (escaped) {
-      escaped = false;
-      continue;
-    }
+    for (let i = recipeIndex; i >= 0; i--) {
+      const char = text[i];
 
-    if (char === "\\") {
-      escaped = true;
-      continue;
-    }
-
-    if (char === '"') {
-      inString = !inString;
-      continue;
-    }
-
-    if (inString) continue;
-
-    if (char === "{") {
-      stack.push(i);
-    }
-
-    if (char === "}") {
-      const start = stack.pop();
-
-      if (start !== undefined) {
-        objects.push(text.slice(start, i + 1));
-      }
-    }
-  }
-
-  return objects.sort((a, b) => a.length - b.length);
-}
-
-  function findRecipeObjectText(text) {
-    const objects = extractJsonObjects(text);
-
-    for (const objectText of objects) {
-      if (!objectText.includes('"@type":"Recipe"')) continue;
-
-      try {
-        const parsed = JSON.parse(objectText);
-        const found = findRecipe(parsed);
-
-        if (found) return found;
-      } catch (error) {
-        console.log("Candidate recipe object failed:", error.message);
+      if (char === "{") {
+        start = i;
+        break;
       }
     }
 
-    return null;
+    if (start < 0) return "";
+
+    inString = false;
+    escaped = false;
+
+    for (let i = start; i < text.length; i++) {
+      const char = text[i];
+
+      if (escaped) {
+        escaped = false;
+        continue;
+      }
+
+      if (char === "\\") {
+        escaped = true;
+        continue;
+      }
+
+      if (char === '"') {
+        inString = !inString;
+        continue;
+      }
+
+      if (inString) continue;
+
+      if (char === "{") depth++;
+      if (char === "}") depth--;
+
+      if (depth === 0) {
+        return text.slice(start, i + 1);
+      }
+    }
+
+    return "";
   }
 
-  recipe = findRecipeObjectText(normalizedText);
+  let recipe = null;
 
-  if (recipe) {
-    console.log("Recipe object found directly:", recipe.name || "Unnamed Recipe");
-  } else {
-    console.log("No recipe object found directly.");
+  const recipeObjectText = extractRecipeObjectText(normalizedText);
+
+  try {
+    if (recipeObjectText) {
+      recipe = JSON.parse(recipeObjectText);
+      console.log("Recipe parsed directly:", recipe?.name || "Unnamed Recipe");
+    }
+  } catch (error) {
+    console.log("Direct recipe parse failed:", error.message);
+    console.log("Recipe object preview:", recipeObjectText.slice(0, 500));
   }
 
   const recipeName = cleanHtmlEntities(cleanText(recipe?.name || "Imported Recipe"));
@@ -577,7 +574,7 @@ function extractRecipeFromJsonLd(jsonLdText, sourceUrl) {
   return {
     success: true,
     successLevel,
-    debugVersion: "simple-dinners-api-jsonld-import-v5",
+    debugVersion: "simple-dinners-api-jsonld-import-v6",
     sourceUrl,
     importedFromUrl: sourceUrl,
     name: recipeName,
@@ -608,6 +605,7 @@ function extractRecipeFromJsonLd(jsonLdText, sourceUrl) {
       finalUrl: sourceUrl,
       hasRecipeText: normalizedText.includes('"@type":"Recipe"'),
       recipeTextIndex: normalizedText.indexOf('"@type":"Recipe"'),
+      recipeObjectLength: recipeObjectText.length,
     },
   };
 }
