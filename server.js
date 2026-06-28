@@ -475,10 +475,22 @@ function extractRecipeFromJsonLd(jsonLdText, sourceUrl) {
   const rawText = String(jsonLdText || "").trim();
 
   const normalizedText = rawText
-    .replace(/\\u003C/g, "<")
-    .replace(/\\u003E/g, ">")
-    .replace(/\\u0026/g, "&")
-    .replace(/\\\//g, "/");
+  .replace(/\\u003C/g, "<")
+  .replace(/\\u003E/g, ">")
+  .replace(/\\u0026/g, "&")
+  .replace(/\\\//g, "/");
+
+console.log("FIRST 200:");
+console.log(normalizedText.slice(0, 200));
+
+try {
+  const parsed = JSON.parse(normalizedText);
+  console.log("DIRECT PARSE WORKED");
+  console.log(parsed["@type"]);
+} catch (e) {
+  console.log("DIRECT PARSE FAILED");
+  console.log(e.message);
+}
 
   function extractRecipeObjectText(text) {
     const recipeIndex = text.indexOf('"@type":"Recipe"');
