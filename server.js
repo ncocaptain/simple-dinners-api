@@ -540,7 +540,12 @@ function extractRecipeFromJsonLd(jsonLdText, sourceUrl) {
 
   try {
     if (recipeObjectText) {
-      recipe = JSON.parse(recipeObjectText);
+      const safeRecipeObjectText = recipeObjectText.replace(
+  /\\([^"\\/bfnrtu])/g,
+  "$1"
+);
+
+recipe = JSON.parse(safeRecipeObjectText);
       console.log("Recipe parsed directly:", recipe?.name || "Unnamed Recipe");
     }
   } catch (error) {
