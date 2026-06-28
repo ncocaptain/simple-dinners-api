@@ -483,49 +483,46 @@ function extractRecipeFromJsonLd(jsonLdText, sourceUrl) {
     .replace(/\\\//g, "/");
 
   function extractJsonObjects(text) {
-    const objects = [];
-    let start = -1;
-    let depth = 0;
-    let inString = false;
-    let escaped = false;
+  const objects = [];
+  const stack = [];
+  let inString = false;
+  let escaped = false;
 
-    for (let i = 0; i < text.length; i++) {
-      const char = text[i];
+  for (let i = 0; i < text.length; i++) {
+    const char = text[i];
 
-      if (escaped) {
-        escaped = false;
-        continue;
-      }
-
-      if (char === "\\") {
-        escaped = true;
-        continue;
-      }
-
-      if (char === '"') {
-        inString = !inString;
-        continue;
-      }
-
-      if (inString) continue;
-
-      if (char === "{") {
-        if (depth === 0) start = i;
-        depth++;
-      }
-
-      if (char === "}") {
-        depth--;
-
-        if (depth === 0 && start >= 0) {
-          objects.push(text.slice(start, i + 1));
-          start = -1;
-        }
-      }
+    if (escaped) {
+      escaped = false;
+      continue;
     }
 
-    return objects;
+    if (char === "\\") {
+      escaped = true;
+      continue;
+    }
+
+    if (char === '"') {
+      inString = !inString;
+      continue;
+    }
+
+    if (inString) continue;
+
+    if (char === "{") {
+      stack.push(i);
+    }
+
+    if (char === "}") {
+      const start = stack.pop();
+
+      if (start !== undefined) {
+        objects.push(text.slice(start, i + 1));
+      }
+    }
   }
+
+  return objects.sort((a, b) => a.length - b.length);
+}
 
   function findRecipeObjectText(text) {
     const objects = extractJsonObjects(text);
