@@ -485,10 +485,12 @@ console.log(normalizedText.slice(0, 200));
 
 try {
   const parsed = JSON.parse(normalizedText);
-  console.log("DIRECT PARSE WORKED");
-  console.log("PARSED KEYS:", Object.keys(parsed));
-console.log("PARSED PREVIEW:", JSON.stringify(parsed).slice(0, 800));
-  console.log(parsed["@type"]);
+  const found = findRecipe(parsed);
+
+  if (found) {
+    recipe = found;
+    console.log("Direct JSON-LD recipe found:", recipe?.name || recipe?.headline);
+  }
 } catch (e) {
   console.log("DIRECT PARSE FAILED");
   console.log(e.message);
@@ -559,7 +561,9 @@ console.log("PARSED PREVIEW:", JSON.stringify(parsed).slice(0, 800));
   .replace(/[\u0000-\u001F]+/g, " ")
   .replace(/\\([^"\\/bfnrtu])/g, "$1");
 
-recipe = JSON.parse(safeRecipeObjectText);
+if (!recipe) {
+  recipe = JSON.parse(safeRecipeObjectText);
+}
       console.log("Recipe parsed directly:", recipe?.name || "Unnamed Recipe");
     }
   } catch (error) {
