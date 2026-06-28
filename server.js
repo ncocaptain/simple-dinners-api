@@ -422,10 +422,24 @@ async function loadAndExtractRecipe(page, url) {
     // Some ad-heavy sites never fully load. That's okay.
   }
 
-  await page.waitForTimeout(500);
+  await page.waitForTimeout(1500);
 
   const html = await page.content();
   const finalUrl = page.url();
+
+  const jsonLdBlocks = extractJsonLdBlocksFromHtml(html);
+
+  for (const block of jsonLdBlocks) {
+    const jsonLdResult = extractRecipeFromJsonLd(block, finalUrl);
+
+    if (
+      jsonLdResult?.success &&
+      jsonLdResult.successLevel !== "metadata-only"
+    ) {
+      return jsonLdResult;
+    }
+  }
+
   const $ = cheerio.load(html);
 
   return extractRecipeFromPage($, url, finalUrl);
