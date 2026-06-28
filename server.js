@@ -486,6 +486,8 @@ console.log(normalizedText.slice(0, 200));
 try {
   const parsed = JSON.parse(normalizedText);
   console.log("DIRECT PARSE WORKED");
+  console.log("PARSED KEYS:", Object.keys(parsed));
+console.log("PARSED PREVIEW:", JSON.stringify(parsed).slice(0, 800));
   console.log(parsed["@type"]);
 } catch (e) {
   console.log("DIRECT PARSE FAILED");
@@ -565,7 +567,9 @@ recipe = JSON.parse(safeRecipeObjectText);
     console.log("Recipe object preview:", recipeObjectText.slice(0, 500));
   }
 
-  const recipeName = cleanHtmlEntities(cleanText(recipe?.name || "Imported Recipe"));
+  const recipeName = cleanHtmlEntities(
+  cleanText(recipe?.name || recipe?.headline || "Imported Recipe")
+);
 
   const ingredients = Array.isArray(recipe?.recipeIngredient)
     ? recipe.recipeIngredient.map(cleanHtmlEntities).map(cleanText).filter(Boolean)
