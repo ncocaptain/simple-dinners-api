@@ -475,26 +475,25 @@ function extractRecipeFromJsonLd(jsonLdText, sourceUrl) {
   const rawText = String(jsonLdText || "").trim();
 
   const normalizedText = rawText
-  .replace(/\\u003C/g, "<")
-  .replace(/\\u003E/g, ">")
-  .replace(/\\u0026/g, "&")
-  .replace(/\\\//g, "/");
+    .replace(/\\u003C/g, "<")
+    .replace(/\\u003E/g, ">")
+    .replace(/\\u0026/g, "&")
+    .replace(/\\\//g, "/");
 
-console.log("FIRST 200:");
-console.log(normalizedText.slice(0, 200));
+  let recipe = null;
 
-try {
-  const parsed = JSON.parse(normalizedText);
-  const found = findRecipe(parsed);
+  try {
+    const parsed = JSON.parse(normalizedText);
+    const found = findRecipe(parsed);
 
-  if (found) {
-    recipe = found;
-    console.log("Direct JSON-LD recipe found:", recipe?.name || recipe?.headline);
+    if (found) {
+      recipe = found;
+      console.log("Direct JSON-LD recipe found:", recipe?.name || recipe?.headline);
+    }
+  } catch (e) {
+    console.log("DIRECT PARSE FAILED");
+    console.log(e.message);
   }
-} catch (e) {
-  console.log("DIRECT PARSE FAILED");
-  console.log(e.message);
-}
 
   function extractRecipeObjectText(text) {
     const recipeIndex = text.indexOf('"@type":"Recipe"');
@@ -506,18 +505,13 @@ try {
     let escaped = false;
 
     for (let i = recipeIndex; i >= 0; i--) {
-      const char = text[i];
-
-      if (char === "{") {
+      if (text[i] === "{") {
         start = i;
         break;
       }
     }
 
     if (start < 0) return "";
-
-    inString = false;
-    escaped = false;
 
     for (let i = start; i < text.length; i++) {
       const char = text[i];
@@ -550,21 +544,16 @@ try {
     return "";
   }
 
-  let recipe = null;
-
   const recipeObjectText = extractRecipeObjectText(normalizedText);
 
   try {
-    if (recipeObjectText) {
-      
+    if (!recipe && recipeObjectText) {
       const safeRecipeObjectText = recipeObjectText
-  .replace(/[\u0000-\u001F]+/g, " ")
-  .replace(/\\([^"\\/bfnrtu])/g, "$1");
+        .replace(/[\u0000-\u001F]+/g, " ")
+        .replace(/\\([^"\\/bfnrtu])/g, "$1");
 
-if (!recipe) {
-  recipe = JSON.parse(safeRecipeObjectText);
-}
-      console.log("Recipe parsed directly:", recipe?.name || "Unnamed Recipe");
+      recipe = JSON.parse(safeRecipeObjectText);
+      console.log("Recipe parsed directly:", recipe?.name || recipe?.headline || "Unnamed Recipe");
     }
   } catch (error) {
     console.log("Direct recipe parse failed:", error.message);
@@ -572,8 +561,8 @@ if (!recipe) {
   }
 
   const recipeName = cleanHtmlEntities(
-  cleanText(recipe?.name || recipe?.headline || "Imported Recipe")
-);
+    cleanText(recipe?.name || recipe?.headline || "Imported Recipe")
+  );
 
   const ingredients = Array.isArray(recipe?.recipeIngredient)
     ? recipe.recipeIngredient.map(cleanHtmlEntities).map(cleanText).filter(Boolean)
@@ -599,7 +588,7 @@ if (!recipe) {
   return {
     success: true,
     successLevel,
-    debugVersion: "simple-dinners-api-jsonld-import-v6",
+    debugVersion: "simple-dinners-api-jsonld-import-v7",
     sourceUrl,
     importedFromUrl: sourceUrl,
     name: recipeName,
@@ -628,9 +617,6 @@ if (!recipe) {
       ingredientsCount: ingredients.length,
       instructionsCount: instructions.length,
       finalUrl: sourceUrl,
-      hasRecipeText: normalizedText.includes('"@type":"Recipe"'),
-      recipeTextIndex: normalizedText.indexOf('"@type":"Recipe"'),
-      recipeObjectLength: recipeObjectText.length,
     },
   };
 }
