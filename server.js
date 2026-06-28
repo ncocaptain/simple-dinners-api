@@ -553,8 +553,8 @@ try {
   try {
     if (recipeObjectText) {
       const safeRecipeObjectText = recipeObjectText.replace(
-  /\\([^"\\/bfnrtu])/g,
-  "$1"
+  /[\u0000-\u001F]+/g,
+  " "
 );
 
 recipe = JSON.parse(safeRecipeObjectText);
