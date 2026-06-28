@@ -341,6 +341,21 @@ app.post("/import-text", async (request, reply) => {
 // Fast HTML first, Playwright fallback second
 // =====================================================
 
+function extractJsonLdBlocksFromHtml(html) {
+  const $ = cheerio.load(html);
+  const blocks = [];
+
+  $("script[type='application/ld+json']").each((_, el) => {
+    const raw = $(el).text().trim();
+
+    if (raw) {
+      blocks.push(raw);
+    }
+  });
+
+  return blocks;
+}
+
 async function fetchAndExtractRecipe(url) {
   const response = await fetch(url, {
     method: "GET",
@@ -364,9 +379,24 @@ async function fetchAndExtractRecipe(url) {
   }
 
   const html = await response.text();
-  const $ = cheerio.load(html);
+const finalUrl = response.url || url;
 
-  return extractRecipeFromPage($, url, response.url || url);
+const jsonLdBlocks = extractJsonLdBlocksFromHtml(html);
+
+for (const block of jsonLdBlocks) {
+  const jsonLdResult = extractRecipeFromJsonLd(block, finalUrl);
+
+  if (
+    jsonLdResult?.success &&
+    jsonLdResult.successLevel !== "metadata-only"
+  ) {
+    return jsonLdResult;
+  }
+}
+
+const $ = cheerio.load(html);
+
+return extractRecipeFromPage($, url, finalUrl);
 }
 
 function shouldUseFastImportResult(result) {
