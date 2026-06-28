@@ -479,14 +479,17 @@ function extractRecipeFromJsonLd(jsonLdText, sourceUrl) {
   const normalizedText = rawText
     .replace(/\\u003C/g, "<")
     .replace(/\\u003E/g, ">")
-    .replace(/\\u0026/g, "&");
+    .replace(/\\u0026/g, "&")
+    .replace(/\\\//g, "/");
 
-  function extractObjectAt(text, startIndex) {
+  function extractJsonObjects(text) {
+    const objects = [];
+    let start = -1;
     let depth = 0;
     let inString = false;
     let escaped = false;
 
-    for (let i = startIndex; i < text.length; i++) {
+    for (let i = 0; i < text.length; i++) {
       const char = text[i];
 
       if (escaped) {
@@ -506,33 +509,49 @@ function extractRecipeFromJsonLd(jsonLdText, sourceUrl) {
 
       if (inString) continue;
 
-      if (char === "{") depth++;
-      if (char === "}") depth--;
+      if (char === "{") {
+        if (depth === 0) start = i;
+        depth++;
+      }
 
-      if (depth === 0) {
-        return text.slice(startIndex, i + 1);
+      if (char === "}") {
+        depth--;
+
+        if (depth === 0 && start >= 0) {
+          objects.push(text.slice(start, i + 1));
+          start = -1;
+        }
       }
     }
 
-    return "";
+    return objects;
   }
 
-  const recipeIndex = normalizedText.indexOf('"@type":"Recipe"');
+  function findRecipeObjectText(text) {
+    const objects = extractJsonObjects(text);
 
-  if (recipeIndex >= 0) {
-    const recipeStart = normalizedText.lastIndexOf("{", recipeIndex);
-    const recipeObjectText = extractObjectAt(normalizedText, recipeStart);
+    for (const objectText of objects) {
+      if (!objectText.includes('"@type":"Recipe"')) continue;
 
-    try {
-      recipe = JSON.parse(recipeObjectText);
-      console.log("Recipe object parsed directly:", recipe?.name);
-    } catch (error) {
-      console.log("Direct recipe parse failed:", error.message);
+      try {
+        const parsed = JSON.parse(objectText);
+        const found = findRecipe(parsed);
+
+        if (found) return found;
+      } catch (error) {
+        console.log("Candidate recipe object failed:", error.message);
+      }
     }
+
+    return null;
   }
 
-  if (!recipe) {
-    console.log("No recipe object found in JSON-LD text.");
+  recipe = findRecipeObjectText(normalizedText);
+
+  if (recipe) {
+    console.log("Recipe object found directly:", recipe.name || "Unnamed Recipe");
+  } else {
+    console.log("No recipe object found directly.");
   }
 
   const recipeName = cleanHtmlEntities(cleanText(recipe?.name || "Imported Recipe"));
@@ -561,7 +580,7 @@ function extractRecipeFromJsonLd(jsonLdText, sourceUrl) {
   return {
     success: true,
     successLevel,
-    debugVersion: "simple-dinners-api-jsonld-import-v4",
+    debugVersion: "simple-dinners-api-jsonld-import-v5",
     sourceUrl,
     importedFromUrl: sourceUrl,
     name: recipeName,
@@ -591,7 +610,7 @@ function extractRecipeFromJsonLd(jsonLdText, sourceUrl) {
       instructionsCount: instructions.length,
       finalUrl: sourceUrl,
       hasRecipeText: normalizedText.includes('"@type":"Recipe"'),
-      recipeTextIndex: recipeIndex,
+      recipeTextIndex: normalizedText.indexOf('"@type":"Recipe"'),
     },
   };
 }
