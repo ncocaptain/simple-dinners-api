@@ -648,6 +648,190 @@ function extractRecipeFromJsonLd(jsonLdText, sourceUrl) {
   };
 }
 
+function extractRecipeFromPage($, sourceUrl, finalUrl) {
+  if (isBlockedPage($, finalUrl)) {
+    const pageTitle = cleanHtmlEntities(cleanText($("title").text()));
+
+    return {
+      success: false,
+      successLevel: "blocked",
+      debugVersion: "simple-dinners-api-importer-v1",
+      sourceUrl,
+      importedFromUrl: finalUrl,
+      name: "",
+      ingredients: [],
+      instructions: [],
+      image: "",
+      linkedRecipeUrl: "",
+      recipe: null,
+      error:
+        "This site blocked the recipe importer. Try another link or add the recipe manually.",
+      debug: {
+        blocked: true,
+        finalUrl,
+        pageTitle,
+      },
+    };
+  }
+
+  let recipe = null;
+
+  $("script[type='application/ld+json']").each((_, el) => {
+    if (recipe) return;
+
+    try {
+      const raw = $(el).text();
+      const parsed = JSON.parse(raw);
+      const found = findRecipe(parsed);
+
+      if (found) recipe = found;
+    } catch {
+      // Ignore invalid JSON-LD blocks.
+    }
+  });
+
+  const rawName =
+    recipe?.name ||
+    recipe?.headline ||
+    $("meta[property='og:title']").attr("content") ||
+    $("title").text() ||
+    "Imported Recipe";
+
+  const recipeName = cleanHtmlEntities(cleanText(rawName));
+
+  let ingredients = Array.isArray(recipe?.recipeIngredient)
+    ? recipe.recipeIngredient.map(cleanHtmlEntities).map(cleanText).filter(Boolean)
+    : [];
+
+  let instructions = extractInstructions(recipe?.recipeInstructions)
+    .map(cleanHtmlEntities)
+    .map(cleanText)
+    .filter(Boolean);
+
+  if (ingredients.length === 0) {
+    if (finalUrl.includes("natashaskitchen.com")) {
+      ingredients = extractNatashaIngredients($);
+    }
+
+    if (ingredients.length === 0) {
+      ingredients = extractBySelectors($, [
+        "[data-ingredient-name='true']",
+        ".mntl-structured-ingredients__list-item",
+        ".ingredients-item-name",
+        "li[class*='ingredient']",
+      ]);
+    }
+  }
+
+  if (instructions.length === 0) {
+    if (finalUrl.includes("natashaskitchen.com")) {
+      instructions = extractNatashaInstructions($);
+    }
+
+    if (instructions.length === 0) {
+      instructions = extractBySelectors($, [
+        ".comp.mntl-sc-block.mntl-sc-block-html",
+        ".mntl-sc-block-group--LI",
+        "li[class*='instruction']",
+        "p[class*='instruction']",
+        "div[class*='direction']",
+      ])
+        .filter((line) =>
+          /mix|stir|cook|bake|heat|place|add|whisk|combine|pour|season|serve|remove|transfer|drain|spread|sprinkle|preheat/i.test(
+            line
+          )
+        )
+        .filter(
+          (step) =>
+            !/watch|video|subscribe|newsletter|follow|instagram|youtube/i.test(
+              step
+            )
+        )
+        .filter(
+          (step) =>
+            !/^pro tip:/i.test(step) &&
+            !/^this soup freezes/i.test(step) &&
+            !/^this will yield/i.test(step) &&
+            !/^refer to package/i.test(step)
+        );
+    }
+  }
+
+  ingredients = ingredients.map(cleanHtmlEntities).map(cleanText).filter(Boolean);
+  instructions = instructions.map(cleanHtmlEntities).map(cleanText).filter(Boolean);
+
+  const image =
+    extractImage(recipe?.image) ||
+    $("meta[property='og:image']").attr("content") ||
+    $("meta[name='twitter:image']").attr("content") ||
+    "";
+
+  const description = cleanHtmlEntities(
+    cleanText(
+      $("meta[property='og:description']").attr("content") ||
+        $("meta[name='description']").attr("content") ||
+        $("meta[name='twitter:description']").attr("content") ||
+        ""
+    )
+  );
+
+  const isSocialSource = isSocialRecipeUrl(finalUrl) || isSocialRecipeUrl(sourceUrl);
+
+  const linkedRecipeUrl = finalUrl.includes("allrecipes.com")
+    ? findAllrecipesRecipeLink($, finalUrl, recipeName)
+    : "";
+
+  const hasIngredients = ingredients.length > 0;
+  const hasInstructions = instructions.length > 0;
+
+  const successLevel =
+    hasIngredients && hasInstructions
+      ? "full"
+      : hasIngredients || hasInstructions
+      ? "partial"
+      : isSocialSource
+      ? "social-metadata-only"
+      : "metadata-only";
+
+  return {
+    success: true,
+    successLevel,
+    debugVersion: "simple-dinners-api-importer-v1",
+    sourceUrl,
+    importedFromUrl: finalUrl,
+    name: recipeName,
+    ingredients,
+    instructions,
+    image,
+    linkedRecipeUrl,
+    recipe: {
+      name: recipeName,
+      ingredients: hasIngredients ? ingredients.join("\n") : "",
+      instructions: hasInstructions
+        ? instructions.join("\n")
+        : "Steps available at source link!",
+      photoUrl: image,
+      slug: `${slugify(recipeName)}-${Date.now().toString().slice(-4)}`,
+      sourceUrl: finalUrl,
+      effort: "normal",
+      importStatus: successLevel,
+      fallbackText: !hasIngredients && !hasInstructions
+        ? [recipeName, description, finalUrl].filter(Boolean).join("\n\n")
+        : "",
+    },
+    debug: {
+      foundRecipe: !!recipe,
+      ingredientsCount: ingredients.length,
+      instructionsCount: instructions.length,
+      finalUrl,
+      linkedRecipeUrl,
+      description,
+      isSocialSource,
+    },
+  };
+}
+
+
 function instructionsMentionEnoughIngredients(ingredientsText, instructionsText) {
   const ingredientWords = String(ingredientsText || "")
     .toLowerCase()
