@@ -7,6 +7,10 @@ import Fastify from "fastify";
 import { chromium } from "playwright";
 import * as cheerio from "cheerio";
 import OpenAI from "openai";
+import {
+  resolvePinterestRecipeUrl,
+  isPinterestRecipeCandidate,
+} from "./pinterestResolver.js";
 
 // =====================================================
 // App setup
@@ -23,9 +27,19 @@ app.options("/*", async (request, reply) => {
   return reply.code(204).send();
 });
 
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY,
-});
+const openaiApiKey = process.env.OPENAI_API_KEY;
+
+const openai = openaiApiKey
+  ? new OpenAI({
+      apiKey: openaiApiKey,
+    })
+  : null;
+
+if (!openaiApiKey) {
+  console.warn(
+    "OPENAI_API_KEY is not set. AI cleanup will be unavailable locally, but non-AI routes can still run."
+  );
+}
 
 app.get("/", async () => {
   return {
@@ -33,6 +47,30 @@ app.get("/", async () => {
     name: "Simple Dinners API",
     version: "simple-dinners-api-importer-v1",
   };
+});
+
+// =====================================================
+// POST /resolve-pinterest
+// Resolve a Pinterest pin to the original recipe website
+// =====================================================
+
+app.post("/resolve-pinterest", async (request, reply) => {
+  const { url } = request.body || {};
+
+  if (!url || typeof url !== "string") {
+    return reply.code(400).send({
+      ok: false,
+      error: "Missing Pinterest URL.",
+    });
+  }
+
+  const result = await resolvePinterestRecipeUrl(url);
+
+  if (!result.ok) {
+    return reply.code(422).send(result);
+  }
+
+  return reply.send(result);
 });
 
 // =====================================================
@@ -47,13 +85,46 @@ app.post("/import-recipe", async (request, reply) => {
     return reply.code(400).send({ error: "URL required" });
   }
 
-  const importUrl = normalizeImportUrl(url);
-  const startedAt = Date.now();
+  let importUrl = normalizeImportUrl(url);
+let resolvedFromPinterest = false;
+let pinterestInputUrl = null;
 
-  console.log("Using Simple Dinners API importer:", {
+if (isPinterestRecipeCandidate(importUrl)) {
+  console.log("Pinterest URL detected. Resolving original recipe URL...", {
     originalUrl: url,
     importUrl,
   });
+
+  const pinterestResult = await resolvePinterestRecipeUrl(importUrl);
+
+  if (!pinterestResult.ok) {
+    return reply.code(422).send({
+      error: pinterestResult.error,
+      source: "pinterest",
+      inputUrl: url,
+      finalPinterestUrl: pinterestResult.finalPinterestUrl,
+    });
+  }
+
+  pinterestInputUrl = importUrl;
+  importUrl = pinterestResult.resolvedUrl;
+  resolvedFromPinterest = true;
+
+  console.log("Pinterest URL resolved:", {
+    pinterestInputUrl,
+    resolvedUrl: importUrl,
+    title: pinterestResult.title,
+  });
+}
+
+const startedAt = Date.now();
+
+console.log("Using Simple Dinners API importer:", {
+  originalUrl: url,
+  importUrl,
+  resolvedFromPinterest,
+  pinterestInputUrl,
+});
 
   let browser;
   let context;
