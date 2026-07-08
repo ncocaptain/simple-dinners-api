@@ -11,13 +11,41 @@ function isPinterestUrl(rawUrl) {
   }
 }
 
+function removeTrackingParams(rawUrl) {
+  try {
+    const url = new URL(rawUrl);
+
+    const removableParams = [
+      "fbclid",
+      "gclid",
+      "mc_cid",
+      "mc_eid",
+      "igshid",
+      "ref",
+    ];
+
+    for (const key of Array.from(url.searchParams.keys())) {
+      const lowerKey = key.toLowerCase();
+
+      if (lowerKey.startsWith("utm_") || removableParams.includes(lowerKey)) {
+        url.searchParams.delete(key);
+      }
+    }
+
+    return url.toString();
+  } catch {
+    return rawUrl;
+  }
+}
+
 function cleanCandidateUrl(raw) {
   try {
     let cleaned = raw
-      .replace(/\\u002F/g, "/")
-      .replace(/\\\//g, "/")
-      .replace(/&amp;/g, "&")
-      .trim();
+  .replace(/\\u002F/g, "/")
+  .replace(/\\u0026/g, "&")
+  .replace(/\\\//g, "/")
+  .replace(/&amp;/g, "&")
+  .trim();
 
     if (cleaned.startsWith("//")) {
       cleaned = `https:${cleaned}`;
@@ -27,7 +55,7 @@ function cleanCandidateUrl(raw) {
       return null;
     }
 
-    return cleaned;
+    return removeTrackingParams(cleaned);
   } catch {
     return null;
   }
