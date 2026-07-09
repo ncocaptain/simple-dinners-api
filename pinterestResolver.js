@@ -1,4 +1,20 @@
+import { chromium } from "playwright";
+
 const PINTEREST_HOSTS = ["pinterest.com", "www.pinterest.com", "pin.it"];
+
+const BAD_HOST_FRAGMENTS = [
+  "pinterest.",
+  "pinimg.com",
+  "facebook.com",
+  "instagram.com",
+  "tiktok.com",
+  "youtube.com",
+  "youtu.be",
+  "chromewebstore.google.com",
+  "chrome.google.com",
+  "googleusercontent.com",
+  "gstatic.com",
+];
 
 function isPinterestUrl(rawUrl) {
   try {
@@ -9,6 +25,41 @@ function isPinterestUrl(rawUrl) {
   } catch {
     return false;
   }
+}
+
+function isPinItUrl(rawUrl) {
+  try {
+    const url = new URL(rawUrl);
+    return url.hostname.toLowerCase() === "pin.it";
+  } catch {
+    return false;
+  }
+}
+
+function isPinterestPinUrl(rawUrl) {
+  try {
+    const url = new URL(rawUrl);
+    const host = url.hostname.toLowerCase();
+
+    return (
+      (host === "pinterest.com" ||
+        host === "www.pinterest.com" ||
+        host.endsWith(".pinterest.com")) &&
+      url.pathname.includes("/pin/")
+    );
+  } catch {
+    return false;
+  }
+}
+
+function decodePinterestText(value) {
+  return value
+    .replace(/\\u002F/g, "/")
+    .replace(/\\u0026/g, "&")
+    .replace(/\\u003D/g, "=")
+    .replace(/\\u003F/g, "?")
+    .replace(/\\\//g, "/")
+    .replace(/&amp;/g, "&");
 }
 
 function removeTrackingParams(rawUrl) {
@@ -40,12 +91,7 @@ function removeTrackingParams(rawUrl) {
 
 function cleanCandidateUrl(raw) {
   try {
-    let cleaned = raw
-  .replace(/\\u002F/g, "/")
-  .replace(/\\u0026/g, "&")
-  .replace(/\\\//g, "/")
-  .replace(/&amp;/g, "&")
-  .trim();
+    let cleaned = decodePinterestText(raw).trim();
 
     if (cleaned.startsWith("//")) {
       cleaned = `https:${cleaned}`;
@@ -67,13 +113,9 @@ function isBadCandidate(rawUrl) {
     const host = url.hostname.toLowerCase();
     const path = url.pathname.toLowerCase();
 
-    if (host.includes("pinterest.")) return true;
-    if (host.includes("pinimg.com")) return true;
-    if (host.includes("facebook.com")) return true;
-    if (host.includes("instagram.com")) return true;
-    if (host.includes("tiktok.com")) return true;
-    if (host.includes("youtube.com")) return true;
-    if (host.includes("youtu.be")) return true;
+    if (BAD_HOST_FRAGMENTS.some((fragment) => host.includes(fragment))) {
+      return true;
+    }
 
     if (
       path.endsWith(".jpg") ||
@@ -101,6 +143,7 @@ async function fetchPinterestHtml(inputUrl) {
         "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 Chrome/120 Safari/537.36",
       Accept:
         "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+      "Accept-Language": "en-US,en;q=0.9",
     },
   });
 
@@ -112,6 +155,128 @@ async function fetchPinterestHtml(inputUrl) {
     html: await response.text(),
     finalUrl: response.url || inputUrl,
   };
+}
+
+async function tryExpandPinItRedirect(inputUrl) {
+  try {
+    let currentUrl = inputUrl;
+
+    for (let i = 0; i < 6; i += 1) {
+      const response = await fetch(currentUrl, {
+        method: "GET",
+        redirect: "manual",
+        headers: {
+          "User-Agent":
+            "Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 Chrome/120 Mobile Safari/537.36",
+          Accept:
+            "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+          "Accept-Language": "en-US,en;q=0.9",
+        },
+      });
+
+      const location = response.headers.get("location");
+
+      if (!location) {
+        return null;
+      }
+
+      const nextUrl = new URL(location, currentUrl).toString();
+
+      if (isPinterestPinUrl(nextUrl)) {
+        return nextUrl;
+      }
+
+      currentUrl = nextUrl;
+    }
+
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+async function tryExpandPinItWithPlaywright(inputUrl) {
+  let browser;
+
+  try {
+    browser = await chromium.launch({
+      headless: true,
+      args: ["--no-sandbox", "--disable-setuid-sandbox"],
+    });
+
+    const context = await browser.newContext({
+      userAgent:
+        "Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 Chrome/120 Mobile Safari/537.36",
+      viewport: { width: 412, height: 915 },
+      locale: "en-US",
+      timezoneId: "America/New_York",
+      extraHTTPHeaders: {
+        "Accept-Language": "en-US,en;q=0.9",
+      },
+    });
+
+    const page = await context.newPage();
+
+    await page.route("**/*", (route) => {
+      const resourceType = route.request().resourceType();
+
+      if (["image", "font", "media"].includes(resourceType)) {
+        return route.abort();
+      }
+
+      return route.continue();
+    });
+
+    await page.goto(inputUrl, {
+      waitUntil: "domcontentloaded",
+      timeout: 20000,
+    });
+
+    await page.waitForTimeout(2500);
+
+    const finalUrl = page.url();
+
+    if (isPinterestPinUrl(finalUrl)) {
+      return finalUrl;
+    }
+
+    const hrefs = await page.$$eval("a[href]", (links) =>
+      links.map((link) => link.href)
+    );
+
+    const pinHref = hrefs.find((href) => {
+      try {
+        const parsed = new URL(href);
+        const host = parsed.hostname.toLowerCase();
+
+        return (
+          (host === "pinterest.com" ||
+            host === "www.pinterest.com" ||
+            host.endsWith(".pinterest.com")) &&
+          parsed.pathname.includes("/pin/")
+        );
+      } catch {
+        return false;
+      }
+    });
+
+    if (pinHref) {
+      return pinHref;
+    }
+
+    const html = await page.content();
+    return extractPinterestPinUrl(html, finalUrl);
+  } catch {
+    return null;
+  } finally {
+    if (browser) {
+      try {
+        await browser.close();
+      } catch {
+        // Ignore browser close errors.
+      }
+    }
+  }
 }
 
 async function tryPinterestOEmbed(pinUrl) {
@@ -132,26 +297,54 @@ async function tryPinterestOEmbed(pinUrl) {
 
     return {
       title: typeof data.title === "string" ? data.title : undefined,
+      html: typeof data.html === "string" ? data.html : undefined,
     };
   } catch {
     return null;
   }
 }
 
+function extractPinterestPinUrl(html, finalUrl) {
+  if (isPinterestPinUrl(finalUrl)) {
+    return finalUrl;
+  }
+
+  const decoded = decodePinterestText(html);
+
+  const fullPinMatch = decoded.match(
+    /https?:\/\/(?:www\.)?pinterest\.[a-z.]+\/pin\/[0-9]+\/?/i
+  );
+
+  if (fullPinMatch?.[0]) {
+    return cleanCandidateUrl(fullPinMatch[0]);
+  }
+
+  const pinIdMatch =
+    decoded.match(/"pin_id"\s*:\s*"([0-9]+)"/i) ||
+    decoded.match(/\/pin\/([0-9]+)\/?/i);
+
+  if (pinIdMatch?.[1]) {
+    return `https://www.pinterest.com/pin/${pinIdMatch[1]}/`;
+  }
+
+  return null;
+}
+
 function extractExternalCandidates(html) {
-  const decoded = html
-    .replace(/\\u002F/g, "/")
-    .replace(/\\\//g, "/")
-    .replace(/&amp;/g, "&");
+  const decoded = decodePinterestText(html);
 
   const candidates = new Set();
 
   const patterns = [
-    /"link"\s*:\s*"([^"]+)"/g,
-    /"url"\s*:\s*"([^"]+)"/g,
+    /"destination_url"\s*:\s*"([^"]+)"/g,
+    /"dominant_link"\s*:\s*"([^"]+)"/g,
     /"website_url"\s*:\s*"([^"]+)"/g,
     /"domain_url"\s*:\s*"([^"]+)"/g,
+    /"link"\s*:\s*"([^"]+)"/g,
+    /"url"\s*:\s*"([^"]+)"/g,
     /"canonical_url"\s*:\s*"([^"]+)"/g,
+    /property="og:url"\s+content="([^"]+)"/g,
+    /name="twitter:url"\s+content="([^"]+)"/g,
     /href="([^"]+)"/g,
   ];
 
@@ -202,8 +395,43 @@ export async function resolvePinterestRecipeUrl(inputUrl) {
   }
 
   try {
-    const { html, finalUrl } = await fetchPinterestHtml(inputUrl);
-    const oembed = await tryPinterestOEmbed(finalUrl);
+    let { html, finalUrl } = await fetchPinterestHtml(inputUrl);
+    let finalPinterestUrl = finalUrl;
+
+    if (isPinItUrl(inputUrl) || isPinItUrl(finalUrl)) {
+  const inputOembed = await tryPinterestOEmbed(inputUrl);
+  const oembedPinUrl = inputOembed?.html
+    ? extractPinterestPinUrl(inputOembed.html, inputUrl)
+    : null;
+
+  const redirectPinUrl = await tryExpandPinItRedirect(inputUrl);
+  const htmlPinUrl = extractPinterestPinUrl(html, finalUrl);
+
+  const playwrightPinUrl =
+    redirectPinUrl || htmlPinUrl || oembedPinUrl
+      ? null
+      : await tryExpandPinItWithPlaywright(inputUrl);
+
+  const expandedPinUrl =
+    redirectPinUrl || htmlPinUrl || oembedPinUrl || playwrightPinUrl;
+
+  if (!expandedPinUrl) {
+    return {
+      ok: false,
+      source: "pinterest",
+      inputUrl,
+      finalPinterestUrl: finalUrl,
+      error: "Could not expand this Pinterest short link.",
+    };
+  }
+
+  const expanded = await fetchPinterestHtml(expandedPinUrl);
+
+  html = expanded.html;
+  finalPinterestUrl = expanded.finalUrl || expandedPinUrl;
+}
+
+    const oembed = await tryPinterestOEmbed(finalPinterestUrl);
 
     const candidates = extractExternalCandidates(html);
     const resolvedUrl = chooseBestCandidate(candidates);
@@ -213,7 +441,7 @@ export async function resolvePinterestRecipeUrl(inputUrl) {
         ok: false,
         source: "pinterest",
         inputUrl,
-        finalPinterestUrl: finalUrl,
+        finalPinterestUrl,
         error: "Could not find an external recipe link from this Pinterest pin.",
       };
     }
@@ -222,12 +450,12 @@ export async function resolvePinterestRecipeUrl(inputUrl) {
       ok: true,
       source: "pinterest",
       inputUrl,
-      finalPinterestUrl: finalUrl,
+      finalPinterestUrl,
       resolvedUrl,
       strategy: "html-destination",
       title: oembed?.title,
     };
-    } catch (error) {
+  } catch (error) {
     return {
       ok: false,
       source: "pinterest",
