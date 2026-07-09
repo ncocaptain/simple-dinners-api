@@ -230,6 +230,16 @@ console.log("Using Simple Dinners API importer:", {
       instructionsCount: firstResult?.instructions?.length || 0,
     });
 
+    firstResult = await rescueSocialCaptionIfUseful(firstResult);
+
+console.log("Recipe result after caption rescue check:", {
+  successLevel: firstResult?.successLevel,
+  name: firstResult?.name,
+  ingredientsCount: firstResult?.ingredients?.length || 0,
+  instructionsCount: firstResult?.instructions?.length || 0,
+  socialCaptionRescue: firstResult?.debug?.socialCaptionRescue === true,
+});
+
     // -----------------------------------------------------
     // Linked recipe follow-up
     // Example: Allrecipes article pages that link to the real recipe page.
@@ -947,6 +957,155 @@ function instructionsMentionEnoughIngredients(ingredientsText, instructionsText)
   return matchedCount >= Math.min(4, Math.ceil(uniqueWords.length * 0.35));
 }
 
+// =====================================================
+// Social caption rescue
+// Used when Instagram/social pages return caption text but no structured recipe
+// =====================================================
+
+function resultNeedsCaptionRescue(result) {
+  if (!result?.success || !result?.recipe) return false;
+
+  const hasIngredients =
+    typeof result.recipe.ingredients === "string" &&
+    result.recipe.ingredients.trim().length > 0;
+
+  const hasInstructions =
+    typeof result.recipe.instructions === "string" &&
+    result.recipe.instructions.trim().length > 0 &&
+    result.recipe.instructions !== "Steps available at source link!";
+
+  if (hasIngredients || hasInstructions) return false;
+
+  return (
+    result.successLevel === "metadata-only" ||
+    result.successLevel === "social-metadata-only"
+  );
+}
+
+function buildCaptionRescueText(result) {
+  const parts = [
+    result.name,
+    result.recipe?.fallbackText,
+    result.debug?.description,
+    result.sourceUrl,
+  ]
+    .filter(Boolean)
+    .map((part) => String(part).trim())
+    .filter(Boolean);
+
+  return Array.from(new Set(parts)).join("\n\n");
+}
+
+function looksLikeRecipeCaption(text) {
+  const value = String(text || "").toLowerCase();
+
+  if (value.length < 120) return false;
+
+  const hasIngredientSignal =
+    value.includes("ingredients:") ||
+    value.includes("ingredient:") ||
+    value.includes("you need") ||
+    value.includes("what you need");
+
+  const hasInstructionSignal =
+    value.includes("instructions:") ||
+    value.includes("directions:") ||
+    value.includes("method:") ||
+    value.includes("steps:") ||
+    /\b1\s*[-.)]/.test(value) ||
+    /1️⃣|2️⃣|3️⃣|4️⃣|5️⃣/.test(value);
+
+  const hasCookingWords =
+    /mix|stir|cook|bake|heat|add|combine|whisk|serve|marinate|drizzle|garnish|assemble/i.test(
+      text
+    );
+
+  return hasIngredientSignal && (hasInstructionSignal || hasCookingWords);
+}
+
+async function rescueSocialCaptionIfUseful(result) {
+  if (!resultNeedsCaptionRescue(result)) return result;
+
+  const rescueText = buildCaptionRescueText(result);
+
+  if (!looksLikeRecipeCaption(rescueText)) {
+    return result;
+  }
+
+  if (!openai) {
+    console.log("Social caption rescue skipped: OPENAI_API_KEY is not set.");
+    return result;
+  }
+
+  try {
+    console.log("Trying social caption recipe rescue:", {
+      name: result.name,
+      sourceUrl: result.sourceUrl,
+      textLength: rescueText.length,
+    });
+
+    const parsed = await parseRecipeTextWithAI(rescueText);
+
+    const rescuedName = cleanText(parsed.name || result.name || "Saved Recipe");
+
+    const rescuedIngredients = Array.isArray(parsed.ingredients)
+      ? parsed.ingredients.map(cleanHtmlEntities).map(cleanText).filter(Boolean)
+      : [];
+
+    const rescuedInstructions = Array.isArray(parsed.instructions)
+      ? parsed.instructions.map(cleanHtmlEntities).map(cleanText).filter(Boolean)
+      : [];
+
+    if (rescuedIngredients.length === 0 || rescuedInstructions.length === 0) {
+      console.log("Social caption rescue did not find enough recipe details:", {
+        ingredientsCount: rescuedIngredients.length,
+        instructionsCount: rescuedInstructions.length,
+      });
+
+      return result;
+    }
+
+    const rescuedRecipe = {
+      name: rescuedName,
+      ingredients: rescuedIngredients.join("\n"),
+      instructions: rescuedInstructions.join("\n"),
+      photoUrl: result.image || result.recipe?.photoUrl || "",
+      slug: `${slugify(rescuedName)}-${Date.now().toString().slice(-4)}`,
+      sourceUrl: result.recipe?.sourceUrl || result.importedFromUrl || result.sourceUrl || "",
+      effort: "normal",
+      importStatus: "full",
+      fallbackText: "",
+    };
+
+    return {
+      ...result,
+      success: true,
+      successLevel: "full",
+      debugVersion: "simple-dinners-api-social-caption-rescue-v1",
+      name: rescuedName,
+      ingredients: rescuedIngredients,
+      instructions: rescuedInstructions,
+      recipe: rescuedRecipe,
+      debug: {
+        ...(result.debug || {}),
+        socialCaptionRescue: true,
+        originalSuccessLevel: result.successLevel,
+        originalName: result.name,
+        rescueTextLength: rescueText.length,
+        ingredientsCount: rescuedIngredients.length,
+        instructionsCount: rescuedInstructions.length,
+      },
+      aiRescue: {
+        enabled: true,
+        type: "social-caption",
+        note: "Recipe details were organized from visible social caption text.",
+      },
+    };
+  } catch (error) {
+    console.error("Social caption rescue failed:", error);
+    return result;
+  }
+}
 // =====================================================
 // AI cleanup result wrapper
 // Runs only after final import / linked recipe follow is complete
