@@ -595,6 +595,105 @@ function isSocialRecipeUrl(url) {
   );
 }
 
+function stripSocialTitleNoise(value) {
+  return String(value || "")
+    .replace(/https?:\/\/\S+/gi, " ")
+    .replace(/www\.\S+/gi, " ")
+    .replace(/#[\w-]+/g, " ")
+    .replace(/@\w+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function isBadSocialTitleCandidate(value) {
+  const text = String(value || "").toLowerCase().trim();
+
+  if (!text) return true;
+  if (text.length < 3) return true;
+
+  return (
+    text.includes("ingredients:") ||
+    text.includes("ingredient:") ||
+    text.includes("instructions:") ||
+    text.includes("directions:") ||
+    text.includes("method:") ||
+    text.includes("steps:") ||
+    text.includes("serving ideas") ||
+    text.includes("macros") ||
+    text.includes("nutrition") ||
+    text.includes("calories") ||
+    text.includes("protein") ||
+    text.includes("follow for") ||
+    text.includes("comment") ||
+    text.includes("save this") ||
+    text.includes("share this") ||
+    text.includes("link in bio")
+  );
+}
+
+function findSocialTitleFromCaption(text) {
+  const value = String(text || "").trim();
+
+  if (!value) return "";
+
+  const beforeRecipeSections = value
+    .split(
+      /ingredients?:|instructions?:|directions?:|method:|steps:|macros?:|nutrition:|serving ideas/i
+    )[0]
+    .trim();
+
+  const candidates = beforeRecipeSections
+    .split(/\n|\. |\|/)
+    .map(stripSocialTitleNoise)
+    .map((line) =>
+      line
+        .replace(/^[^\w]+/g, "")
+        .replace(/[^\w\s&'-]+$/g, "")
+        .trim()
+    )
+    .filter(Boolean);
+
+  const bestCandidate = candidates.find((candidate) => {
+    return candidate.length >= 4 && candidate.length <= 90 && !isBadSocialTitleCandidate(candidate);
+  });
+
+  return bestCandidate || "";
+}
+
+function cleanSocialRecipeTitle(name, fallbackText = "", sourceUrl = "") {
+  const originalName = cleanHtmlEntities(cleanText(name || ""));
+  const cleanedName = stripSocialTitleNoise(originalName);
+
+  const suspiciousTitle =
+    !cleanedName ||
+    cleanedName.length > 90 ||
+    isBadSocialTitleCandidate(cleanedName) ||
+    /#/.test(originalName) ||
+    /ingredients?:|instructions?:|directions?:|serving ideas|macros?:|nutrition:/i.test(
+      originalName
+    );
+
+  if (!suspiciousTitle) {
+    return cleanedName;
+  }
+
+  const titleFromCaption = findSocialTitleFromCaption(fallbackText);
+
+  if (titleFromCaption) {
+    return titleFromCaption;
+  }
+
+  const lowerUrl = String(sourceUrl || "").toLowerCase();
+
+  if (lowerUrl.includes("instagram.com")) return "Instagram Recipe";
+  if (lowerUrl.includes("tiktok.com")) return "TikTok Recipe";
+  if (lowerUrl.includes("facebook.com") || lowerUrl.includes("fb.watch")) {
+    return "Facebook Recipe";
+  }
+
+  return "Saved Social Recipe";
+}
+
 
 function extractRecipeFromJsonLd(jsonLdText, sourceUrl) {
   const rawText = String(jsonLdText || "").trim();
@@ -792,7 +891,7 @@ function extractRecipeFromPage($, sourceUrl, finalUrl) {
     $("title").text() ||
     "Imported Recipe";
 
-  const recipeName = cleanHtmlEntities(cleanText(rawName));
+  let recipeName = cleanHtmlEntities(cleanText(rawName));
 
   let ingredients = Array.isArray(recipe?.recipeIngredient)
     ? recipe.recipeIngredient.map(cleanHtmlEntities).map(cleanText).filter(Boolean)
@@ -872,7 +971,13 @@ function extractRecipeFromPage($, sourceUrl, finalUrl) {
 
   const isSocialSource = isSocialRecipeUrl(finalUrl) || isSocialRecipeUrl(sourceUrl);
 
-  const linkedRecipeUrl = finalUrl.includes("allrecipes.com")
+const originalRecipeName = recipeName;
+
+if (isSocialSource) {
+  recipeName = cleanSocialRecipeTitle(recipeName, description, finalUrl);
+}
+
+const linkedRecipeUrl = finalUrl.includes("allrecipes.com")
     ? findAllrecipesRecipeLink($, finalUrl, recipeName)
     : "";
 
@@ -915,14 +1020,16 @@ function extractRecipeFromPage($, sourceUrl, finalUrl) {
         : "",
     },
     debug: {
-      foundRecipe: !!recipe,
-      ingredientsCount: ingredients.length,
-      instructionsCount: instructions.length,
-      finalUrl,
-      linkedRecipeUrl,
-      description,
-      isSocialSource,
-    },
+  foundRecipe: !!recipe,
+  ingredientsCount: ingredients.length,
+  instructionsCount: instructions.length,
+  finalUrl,
+  linkedRecipeUrl,
+  description,
+  isSocialSource,
+  originalRecipeName: isSocialSource ? originalRecipeName : undefined,
+  socialTitleCleaned: isSocialSource && originalRecipeName !== recipeName,
+},
   };
 }
 
@@ -1046,7 +1153,11 @@ async function rescueSocialCaptionIfUseful(result) {
 
     const parsed = await parseRecipeTextWithAI(rescueText);
 
-    const rescuedName = cleanText(parsed.name || result.name || "Saved Recipe");
+    const rescuedName = cleanSocialRecipeTitle(
+  parsed.name || result.name || "Saved Recipe",
+  rescueText,
+  result.sourceUrl || result.importedFromUrl || result.recipe?.sourceUrl || ""
+);
 
     const rescuedIngredients = Array.isArray(parsed.ingredients)
       ? parsed.ingredients.map(cleanHtmlEntities).map(cleanText).filter(Boolean)
