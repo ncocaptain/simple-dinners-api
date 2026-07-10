@@ -597,98 +597,24 @@ function isSocialRecipeUrl(url) {
 
 function stripSocialTitleNoise(value) {
   return String(value || "")
+    .replace(/\\n/g, "\n")
     .replace(/https?:\/\/\S+/gi, " ")
     .replace(/www\.\S+/gi, " ")
-    .replace(/#[\w-]+/g, " ")
+    .replace(/#[A-Za-z0-9_-]+/g, " ")
     .replace(/@\w+/g, " ")
+    .replace(/[\u{1F300}-\u{1FAFF}]/gu, " ")
+    .replace(/[★✦✨⭐️✅📌📝🍽️🥩🍚👩‍🍳]/g, " ")
+    .replace(/^.*?\bon instagram:\s*/i, "")
+    .replace(/^.*?\bon tiktok:\s*/i, "")
+    .replace(/^.*?\bon facebook:\s*/i, "")
+    .replace(/^recipe\s*[:\-]\s*/i, "")
+    .replace(/^title\s*[:\-]\s*/i, "")
+    .replace(/^["'“”]+|["'“”]+$/g, "")
     .replace(/\s+/g, " ")
     .trim();
 }
 
-function isBadSocialTitleCandidate(value) {
-  const text = String(value || "").toLowerCase().trim();
-
-  if (!text) return true;
-  if (text.length < 3) return true;
-
-  const startsLikeInstruction =
-  /^(add|mix|stir|cook|bake|heat|pour|spread|roast|broil|serve|finish|combine|whisk|drizzle|garnish|assemble|marinate|preheat|place|toss|slice|chop|season)\b/i.test(
-    text
-  );
-
-return (
-  startsLikeInstruction ||
-  text.includes("ingredients:") ||
-  text.includes("ingredient:") ||
-  text.includes("instructions:") ||
-  text.includes("directions:") ||
-  text.includes("method:") ||
-  text.includes("steps:") ||
-  text.includes("serving ideas") ||
-  text.includes("macros") ||
-  text.includes("nutrition") ||
-  text.includes("calories") ||
-  text.includes("protein") ||
-  text.includes("follow for") ||
-  text.includes("comment") ||
-  text.includes("save this") ||
-  text.includes("share this") ||
-  text.includes("link in bio")
-);
-}
-
-function findSocialTitleFromCaption(text) {
-  const value = String(text || "").trim();
-
-  if (!value) return "";
-
-  const beforeRecipeSections = value
-    .split(
-      /ingredients?:|instructions?:|directions?:|method:|steps:|macros?:|nutrition:|serving ideas/i
-    )[0]
-    .trim();
-
-  const candidates = beforeRecipeSections
-    .split(/\n|\. |\|/)
-    .map(stripSocialTitleNoise)
-    .map((line) =>
-      line
-        .replace(/^[^\w]+/g, "")
-        .replace(/[^\w\s&'-]+$/g, "")
-        .trim()
-    )
-    .filter(Boolean);
-
-  const bestCandidate = candidates.find((candidate) => {
-    return candidate.length >= 4 && candidate.length <= 90 && !isBadSocialTitleCandidate(candidate);
-  });
-
-  return bestCandidate || "";
-}
-
-function cleanSocialRecipeTitle(name, fallbackText = "", sourceUrl = "") {
-  const originalName = cleanHtmlEntities(cleanText(name || ""));
-  const cleanedName = stripSocialTitleNoise(originalName);
-
-  const suspiciousTitle =
-    !cleanedName ||
-    cleanedName.length > 90 ||
-    isBadSocialTitleCandidate(cleanedName) ||
-    /#/.test(originalName) ||
-    /ingredients?:|instructions?:|directions?:|serving ideas|macros?:|nutrition:/i.test(
-      originalName
-    );
-
-  if (!suspiciousTitle) {
-    return cleanedName;
-  }
-
-  const titleFromCaption = findSocialTitleFromCaption(fallbackText);
-
-  if (titleFromCaption) {
-    return titleFromCaption;
-  }
-
+function getSocialFallbackTitle(sourceUrl = "") {
   const lowerUrl = String(sourceUrl || "").toLowerCase();
 
   if (lowerUrl.includes("instagram.com")) return "Instagram Recipe";
@@ -700,6 +626,200 @@ function cleanSocialRecipeTitle(name, fallbackText = "", sourceUrl = "") {
   return "Saved Social Recipe";
 }
 
+function isBadSocialTitleCandidate(value) {
+  const text = String(value || "").toLowerCase().trim();
+
+  if (!text) return true;
+  if (text.length < 4) return true;
+  if (text.length > 90) return true;
+
+  const words = text.split(/\s+/).filter(Boolean);
+
+  if (words.length > 12) return true;
+
+  const genericSocialTitle =
+    text === "instagram" ||
+    text === "instagram recipe" ||
+    text === "tiktok" ||
+    text === "tiktok recipe" ||
+    text === "facebook" ||
+    text === "facebook recipe" ||
+    text.includes("tiktok - make your day") ||
+    text.includes("make your day") ||
+    text.includes("photos and videos") ||
+    text.includes("watch more") ||
+    text.includes("log in") ||
+    text.includes("sign up");
+
+  const sectionOrMetaText =
+    text.includes("ingredients:") ||
+    text.includes("ingredient:") ||
+    text.includes("instructions:") ||
+    text.includes("directions:") ||
+    text.includes("method:") ||
+    text.includes("steps:") ||
+    text.includes("serving ideas") ||
+    text.includes("macros") ||
+    text.includes("nutrition") ||
+    text.includes("calories") ||
+    text.includes("protein") ||
+    text.includes("carbs") ||
+    text.includes("fat:") ||
+    text.includes("time:") ||
+    text.includes("serving:");
+
+  const promotionalNoise =
+    text.includes("follow for") ||
+    text.includes("comment") ||
+    text.includes("save this") ||
+    text.includes("share this") ||
+    text.includes("link in bio") ||
+    text.includes("check out") ||
+    text.includes("take a look");
+
+  const startsLikeInstruction =
+    /^(optional:?\s*)?(add|mix|stir|cook|bake|heat|pour|spread|roast|broil|serve|finish|combine|whisk|drizzle|garnish|assemble|marinate|preheat|place|toss|slice|chop|season|top|remove|transfer)\b/i.test(
+      text
+    );
+
+  const containsInstructionPhrase =
+    /\b(add|mix|stir|cook|bake|heat|pour|spread|roast|broil|serve|finish|combine|whisk|drizzle|garnish|assemble|marinate|preheat|place|toss|season|top)\b/i.test(
+      text
+    ) &&
+    /\b(minutes?|until|bowl|pan|tray|oven|coated|tender|golden|caramelized|halfway|lemon|brightness|sauce|serve|served)\b/i.test(
+      text
+    );
+
+  return (
+    genericSocialTitle ||
+    sectionOrMetaText ||
+    promotionalNoise ||
+    startsLikeInstruction ||
+    containsInstructionPhrase
+  );
+}
+
+function extractQuotedSocialTitles(text) {
+  const value = String(text || "");
+  const candidates = [];
+
+  const patterns = [
+    /"([^"]{4,120})"/g,
+    /“([^”]{4,120})”/g,
+    /'([^']{4,120})'/g,
+  ];
+
+  for (const pattern of patterns) {
+    let match;
+
+    while ((match = pattern.exec(value)) !== null) {
+      candidates.push(match[1]);
+    }
+  }
+
+  return candidates;
+}
+
+function extractSocialTitleCandidates(text) {
+  const value = String(text || "");
+
+  if (!value.trim()) return [];
+
+  const beforeRecipeSections = value
+    .split(
+      /ingredients?:|instructions?:|directions?:|method:|steps:|macros?:|nutrition:|serving ideas/i
+    )[0]
+    .trim();
+
+  const quotedCandidates = [
+    ...extractQuotedSocialTitles(value),
+    ...extractQuotedSocialTitles(beforeRecipeSections),
+  ];
+
+  const lineCandidates = beforeRecipeSections
+    .split(/\n|\r|\||•|◆|✦|⭐|📝|👩‍🍳|🥩|🍚/)
+    .flatMap((line) => line.split(/(?<=[.!?])\s+/))
+    .map(stripSocialTitleNoise)
+    .filter(Boolean);
+
+  return [...quotedCandidates, ...lineCandidates];
+}
+
+function scoreSocialTitleCandidate(value) {
+  const text = String(value || "").toLowerCase();
+  const words = text.split(/\s+/).filter(Boolean);
+
+  let score = 0;
+
+  if (words.length >= 2 && words.length <= 8) score += 4;
+  if (words.length >= 9 && words.length <= 12) score += 1;
+
+  if (
+    /\b(chicken|beef|shrimp|crab|salmon|pork|steak|rice|bowl|pasta|salad|soup|taco|tacos|potato|potatoes|veggies|vegetables|mushrooms|cookies|cake|pie|sauce|copycat|casserole|skillet|roasted|grilled|baked|slow cooker|air fryer)\b/i.test(
+      text
+    )
+  ) {
+    score += 4;
+  }
+
+  if (text.includes("recipe")) score += 2;
+  if (text.length > 70) score -= 2;
+
+  return score;
+}
+
+function chooseBestSocialTitleCandidate(candidates, sourceUrl = "") {
+  const cleanedCandidates = candidates
+    .map(stripSocialTitleNoise)
+    .map((candidate) =>
+      candidate
+        .replace(/^[^\w]+/g, "")
+        .replace(/[^\w\s&'’/-]+$/g, "")
+        .replace(/\s+/g, " ")
+        .trim()
+    )
+    .filter(Boolean);
+
+  const uniqueCandidates = Array.from(new Set(cleanedCandidates));
+
+  const goodCandidates = uniqueCandidates.filter(
+    (candidate) => !isBadSocialTitleCandidate(candidate)
+  );
+
+  if (goodCandidates.length === 0) {
+    return getSocialFallbackTitle(sourceUrl);
+  }
+
+  return goodCandidates
+    .map((candidate, index) => ({
+      candidate,
+      index,
+      score: scoreSocialTitleCandidate(candidate),
+    }))
+    .sort((a, b) => {
+      if (b.score !== a.score) return b.score - a.score;
+      return a.index - b.index;
+    })[0].candidate;
+}
+
+function findSocialTitleFromCaption(text, sourceUrl = "") {
+  return chooseBestSocialTitleCandidate(
+    extractSocialTitleCandidates(text),
+    sourceUrl
+  );
+}
+
+function cleanSocialRecipeTitle(name, fallbackText = "", sourceUrl = "") {
+  const candidates = [
+    ...extractQuotedSocialTitles(name),
+    ...extractQuotedSocialTitles(fallbackText),
+    ...extractSocialTitleCandidates(name),
+    ...extractSocialTitleCandidates(fallbackText),
+    name,
+  ];
+
+  return chooseBestSocialTitleCandidate(candidates, sourceUrl);
+}
 
 function extractRecipeFromJsonLd(jsonLdText, sourceUrl) {
   const rawText = String(jsonLdText || "").trim();
