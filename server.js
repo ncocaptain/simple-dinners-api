@@ -231,14 +231,17 @@ console.log("Using Simple Dinners API importer:", {
     });
 
     firstResult = await rescueSocialCaptionIfUseful(firstResult);
+    firstResult = cleanSocialFallbackTitleIfNeeded(firstResult);
 
-console.log("Recipe result after caption rescue check:", {
-  successLevel: firstResult?.successLevel,
-  name: firstResult?.name,
-  ingredientsCount: firstResult?.ingredients?.length || 0,
-  instructionsCount: firstResult?.instructions?.length || 0,
-  socialCaptionRescue: firstResult?.debug?.socialCaptionRescue === true,
-});
+    console.log("Recipe result after caption rescue check:", {
+      successLevel: firstResult?.successLevel,
+      name: firstResult?.name,
+      ingredientsCount: firstResult?.ingredients?.length || 0,
+      instructionsCount: firstResult?.instructions?.length || 0,
+      socialCaptionRescue: firstResult?.debug?.socialCaptionRescue === true,
+      socialFallbackTitleCleaned:
+        firstResult?.debug?.socialFallbackTitleCleaned === true,
+    });
 
     // -----------------------------------------------------
     // Linked recipe follow-up
@@ -1096,14 +1099,13 @@ function extractRecipeFromPage($, sourceUrl, finalUrl) {
   );
 
   const isSocialSource = isSocialRecipeUrl(finalUrl) || isSocialRecipeUrl(sourceUrl);
+  const originalRecipeName = recipeName;
 
-const originalRecipeName = recipeName;
-
-if (isSocialSource) {
-  recipeName = cleanSocialRecipeTitle(recipeName, description, finalUrl);
-}
-
-const linkedRecipeUrl = finalUrl.includes("allrecipes.com")
+  // Important:
+  // Do NOT clean the social title here.
+  // Instagram often puts useful recipe caption text in og:title.
+  // We keep the original caption/name alive so Social Caption Rescue can read it.
+  const linkedRecipeUrl = finalUrl.includes("allrecipes.com")
     ? findAllrecipesRecipeLink($, finalUrl, recipeName)
     : "";
 
@@ -1348,6 +1350,72 @@ async function rescueSocialCaptionIfUseful(result) {
     return result;
   }
 }
+function cleanSocialFallbackTitleIfNeeded(result) {
+  if (!result?.success || !result?.recipe) return result;
+
+  const isSocialSource =
+    isSocialRecipeUrl(result.sourceUrl) ||
+    isSocialRecipeUrl(result.importedFromUrl) ||
+    isSocialRecipeUrl(result.recipe?.sourceUrl) ||
+    result.debug?.isSocialSource === true;
+
+  if (!isSocialSource) return result;
+
+  // If AI rescue worked, keep the rescued recipe title.
+  if (result.debug?.socialCaptionRescue === true) {
+    return result;
+  }
+
+  const hasIngredients =
+    Array.isArray(result.ingredients) && result.ingredients.length > 0;
+
+  const hasInstructions =
+    Array.isArray(result.instructions) && result.instructions.length > 0;
+
+  // If we found real recipe details, keep the imported title.
+  // The cleanup is only for weak social fallback cards.
+  if (hasIngredients || hasInstructions) {
+    return result;
+  }
+
+  const originalName =
+    result.debug?.originalRecipeName ||
+    result.name ||
+    result.recipe?.name ||
+    "";
+
+  const rescueText = [
+    originalName,
+    result.debug?.description,
+    result.recipe?.fallbackText,
+    result.sourceUrl,
+  ]
+    .filter(Boolean)
+    .map((part) => String(part).trim())
+    .filter(Boolean)
+    .join("\n\n");
+
+  const cleanedName = cleanSocialRecipeTitle(
+    originalName,
+    rescueText,
+    result.sourceUrl || result.importedFromUrl || result.recipe?.sourceUrl || ""
+  );
+
+  result.name = cleanedName;
+  result.recipe.name = cleanedName;
+  result.recipe.slug = `${slugify(cleanedName)}-${Date.now()
+    .toString()
+    .slice(-4)}`;
+
+  result.debug = {
+    ...(result.debug || {}),
+    socialFallbackTitleCleaned: true,
+    originalSocialFallbackName: originalName,
+  };
+
+  return result;
+}
+
 // =====================================================
 // AI cleanup result wrapper
 // Runs only after final import / linked recipe follow is complete
