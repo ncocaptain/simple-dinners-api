@@ -86,6 +86,17 @@ app.post("/import-recipe", async (request, reply) => {
   }
 
   let importUrl = normalizeImportUrl(url);
+
+if (!importUrl || typeof importUrl !== "string") {
+  return reply.code(400).send({
+    success: false,
+    successLevel: "bad-url",
+    error: "Could not read a valid recipe URL from that shared link.",
+    originalUrl: url,
+    normalizedUrl: importUrl,
+  });
+}
+
 let resolvedFromPinterest = false;
 let pinterestInputUrl = null;
 
@@ -539,20 +550,54 @@ function normalizeImportUrl(rawUrl) {
 
   if (!value) return "";
 
-  const firstUrlMatch = value.match(/https?:\/\/[^\s]+/i);
+  const firstUrlMatch = value.match(/https?:\/\/[^\s"'<>]+/i);
   const candidate = firstUrlMatch ? firstUrlMatch[0] : value;
 
   try {
     const parsed = new URL(candidate);
     const host = parsed.hostname.toLowerCase();
 
-    const redirectParamNames = ["u", "url", "target", "redirect", "redirect_url"];
+    const redirectParamNames = [
+      "u",
+      "url",
+      "target",
+      "redirect",
+      "redirect_url",
+      "next",
+    ];
 
     for (const paramName of redirectParamNames) {
       const possibleRedirect = parsed.searchParams.get(paramName);
 
-      if (possibleRedirect && /^https?:\/\//i.test(possibleRedirect)) {
-        return normalizeImportUrl(possibleRedirect);
+      if (!possibleRedirect) continue;
+
+      try {
+        const redirectUrl = new URL(possibleRedirect, parsed.origin).toString();
+
+        if (redirectUrl && /^https?:\/\//i.test(redirectUrl)) {
+          return normalizeImportUrl(redirectUrl);
+        }
+      } catch {
+        // Ignore invalid redirect values.
+      }
+    }
+
+    if (
+      host.includes("instagram.com") &&
+      parsed.pathname.includes("/accounts/login")
+    ) {
+      const nextUrl = parsed.searchParams.get("next");
+
+      if (nextUrl) {
+        try {
+          const normalizedNextUrl = new URL(nextUrl, parsed.origin).toString();
+
+          if (normalizedNextUrl) {
+            return normalizeImportUrl(normalizedNextUrl);
+          }
+        } catch {
+          // Fall through safely.
+        }
       }
     }
 
@@ -561,9 +606,10 @@ function normalizeImportUrl(rawUrl) {
       host.includes("fb.watch") ||
       host.includes("instagram.com") ||
       host.includes("tiktok.com") ||
-      host.includes("pinterest.com")
+      host.includes("pinterest.com") ||
+      host.includes("pin.it")
     ) {
-      return candidate;
+      return parsed.toString();
     }
 
     parsed.hash = "";
@@ -582,7 +628,7 @@ function normalizeImportUrl(rawUrl) {
 
     return parsed.toString();
   } catch {
-    return candidate;
+    return candidate || "";
   }
 }
 
@@ -605,13 +651,28 @@ function stripSocialTitleNoise(value) {
     .replace(/www\.\S+/gi, " ")
     .replace(/#[A-Za-z0-9_-]+/g, " ")
     .replace(/@\w+/g, " ")
-    .replace(/[\u{1F300}-\u{1FAFF}]/gu, " ")
-    .replace(/[★✦✨⭐️✅📌📝🍽️🥩🍚👩‍🍳]/g, " ")
     .replace(/^.*?\bon instagram:\s*/i, "")
     .replace(/^.*?\bon tiktok:\s*/i, "")
     .replace(/^.*?\bon facebook:\s*/i, "")
     .replace(/^recipe\s*[:\-]\s*/i, "")
     .replace(/^title\s*[:\-]\s*/i, "")
+
+    // Social captions often start with a real recipe title,
+    // then add promo text. Keep the title, drop the promo tail.
+    .replace(/\bfull recipe\b.*$/i, " ")
+    .replace(/\bfull details\b.*$/i, " ")
+    .replace(/\bstep by step\b.*$/i, " ")
+    .replace(/\bon my page\b.*$/i, " ")
+    .replace(/\bright under my profile picture\b.*$/i, " ")
+    .replace(/\bunder my profile picture\b.*$/i, " ")
+    .replace(/\brecipe below\b.*$/i, " ")
+    .replace(/\brecipe in caption\b.*$/i, " ")
+    .replace(/\blink in bio\b.*$/i, " ")
+    .replace(/\bcomment for\b.*$/i, " ")
+    .replace(/\bfollow for\b.*$/i, " ")
+
+    .replace(/[\u{1F300}-\u{1FAFF}]/gu, " ")
+    .replace(/[★✦✨⭐️✅📌📝🍽️🥩🍚👩‍🍳]/g, " ")
     .replace(/^["'“”]+|["'“”]+$/g, "")
     .replace(/\s+/g, " ")
     .trim();
@@ -2342,7 +2403,7 @@ ${recipe.instructions}
       notes: recipe.notes || "",
     };
   }
-}
+  } 
 
 // =====================================================
 // Server start
