@@ -1217,9 +1217,14 @@ function resultNeedsCaptionRescue(result) {
 
 function buildCaptionRescueText(result) {
   const parts = [
-    result.name,
-    result.recipe?.fallbackText,
+    // Important:
+    // For Instagram/social posts, the full caption often arrives as the original
+    // og:title. We clean the visible recipe name, but still need the original
+    // caption text for AI rescue.
+    result.debug?.originalRecipeName,
     result.debug?.description,
+    result.recipe?.fallbackText,
+    result.name,
     result.sourceUrl,
   ]
     .filter(Boolean)
