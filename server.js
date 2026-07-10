@@ -11,6 +11,10 @@ import {
   resolvePinterestRecipeUrl,
   isPinterestRecipeCandidate,
 } from "./pinterestResolver.js";
+import {
+  resolveSocialCaptionParts,
+  chooseSocialRecipeTitle,
+} from "./socialCaptionResolver.js";
 
 // =====================================================
 // App setup
@@ -87,55 +91,55 @@ app.post("/import-recipe", async (request, reply) => {
 
   let importUrl = normalizeImportUrl(url);
 
-if (!importUrl || typeof importUrl !== "string") {
-  return reply.code(400).send({
-    success: false,
-    successLevel: "bad-url",
-    error: "Could not read a valid recipe URL from that shared link.",
-    originalUrl: url,
-    normalizedUrl: importUrl,
-  });
-}
-
-let resolvedFromPinterest = false;
-let pinterestInputUrl = null;
-
-if (isPinterestRecipeCandidate(importUrl)) {
-  console.log("Pinterest URL detected. Resolving original recipe URL...", {
-    originalUrl: url,
-    importUrl,
-  });
-
-  const pinterestResult = await resolvePinterestRecipeUrl(importUrl);
-
-  if (!pinterestResult.ok) {
-    return reply.code(422).send({
-      error: pinterestResult.error,
-      source: "pinterest",
-      inputUrl: url,
-      finalPinterestUrl: pinterestResult.finalPinterestUrl,
+  if (!importUrl || typeof importUrl !== "string") {
+    return reply.code(400).send({
+      success: false,
+      successLevel: "bad-url",
+      error: "Could not read a valid recipe URL from that shared link.",
+      originalUrl: url,
+      normalizedUrl: importUrl,
     });
   }
 
-  pinterestInputUrl = importUrl;
-  importUrl = pinterestResult.resolvedUrl;
-  resolvedFromPinterest = true;
+  let resolvedFromPinterest = false;
+  let pinterestInputUrl = null;
 
-  console.log("Pinterest URL resolved:", {
+  if (isPinterestRecipeCandidate(importUrl)) {
+    console.log("Pinterest URL detected. Resolving original recipe URL...", {
+      originalUrl: url,
+      importUrl,
+    });
+
+    const pinterestResult = await resolvePinterestRecipeUrl(importUrl);
+
+    if (!pinterestResult.ok) {
+      return reply.code(422).send({
+        error: pinterestResult.error,
+        source: "pinterest",
+        inputUrl: url,
+        finalPinterestUrl: pinterestResult.finalPinterestUrl,
+      });
+    }
+
+    pinterestInputUrl = importUrl;
+    importUrl = pinterestResult.resolvedUrl;
+    resolvedFromPinterest = true;
+
+    console.log("Pinterest URL resolved:", {
+      pinterestInputUrl,
+      resolvedUrl: importUrl,
+      title: pinterestResult.title,
+    });
+  }
+
+  const startedAt = Date.now();
+
+  console.log("Using Simple Dinners API importer:", {
+    originalUrl: url,
+    importUrl,
+    resolvedFromPinterest,
     pinterestInputUrl,
-    resolvedUrl: importUrl,
-    title: pinterestResult.title,
   });
-}
-
-const startedAt = Date.now();
-
-console.log("Using Simple Dinners API importer:", {
-  originalUrl: url,
-  importUrl,
-  resolvedFromPinterest,
-  pinterestInputUrl,
-});
 
   let browser;
   let context;
@@ -582,6 +586,9 @@ function normalizeImportUrl(rawUrl) {
       }
     }
 
+    // Instagram sometimes shares login-wrapper URLs like:
+    // /accounts/login/?next=https%3A%2F%2Fwww.instagram.com%2Freel%2F...
+    // Unwrap those before treating the URL as a valid social recipe source.
     if (
       host.includes("instagram.com") &&
       parsed.pathname.includes("/accounts/login")
@@ -631,7 +638,6 @@ function normalizeImportUrl(rawUrl) {
     return candidate || "";
   }
 }
-
 function isSocialRecipeUrl(url) {
   const value = String(url || "").toLowerCase();
 
@@ -644,257 +650,13 @@ function isSocialRecipeUrl(url) {
   );
 }
 
-function stripSocialTitleNoise(value) {
-  return String(value || "")
-    .replace(/\\n/g, "\n")
-    .replace(/https?:\/\/\S+/gi, " ")
-    .replace(/www\.\S+/gi, " ")
-    .replace(/#[A-Za-z0-9_-]+/g, " ")
-    .replace(/@\w+/g, " ")
-    .replace(/^.*?\bon instagram:\s*/i, "")
-    .replace(/^.*?\bon tiktok:\s*/i, "")
-    .replace(/^.*?\bon facebook:\s*/i, "")
-    .replace(/^recipe\s*[:\-]\s*/i, "")
-    .replace(/^title\s*[:\-]\s*/i, "")
-
-    // Social captions often start with a real recipe title,
-    // then add promo text. Keep the title, drop the promo tail.
-    .replace(/\bfull recipe\b.*$/i, " ")
-    .replace(/\bfull details\b.*$/i, " ")
-    .replace(/\bstep by step\b.*$/i, " ")
-    .replace(/\bon my page\b.*$/i, " ")
-    .replace(/\bright under my profile picture\b.*$/i, " ")
-    .replace(/\bunder my profile picture\b.*$/i, " ")
-    .replace(/\brecipe below\b.*$/i, " ")
-    .replace(/\brecipe in caption\b.*$/i, " ")
-    .replace(/\blink in bio\b.*$/i, " ")
-    .replace(/\bcomment for\b.*$/i, " ")
-    .replace(/\bfollow for\b.*$/i, " ")
-
-    .replace(/[\u{1F300}-\u{1FAFF}]/gu, " ")
-    .replace(/[★✦✨⭐️✅📌📝🍽️🥩🍚👩‍🍳]/g, " ")
-    .replace(/^["'“”]+|["'“”]+$/g, "")
-    .replace(/\s+/g, " ")
-    .trim();
-}
-
-function getSocialFallbackTitle(sourceUrl = "") {
-  const lowerUrl = String(sourceUrl || "").toLowerCase();
-
-  if (lowerUrl.includes("instagram.com")) return "Instagram Recipe";
-  if (lowerUrl.includes("tiktok.com")) return "TikTok Recipe";
-  if (lowerUrl.includes("facebook.com") || lowerUrl.includes("fb.watch")) {
-    return "Facebook Recipe";
-  }
-
-  return "Saved Social Recipe";
-}
-
-function isBadSocialTitleCandidate(value) {
-  const text = String(value || "").toLowerCase().trim();
-
-  if (!text) return true;
-  if (text.length < 4) return true;
-  if (text.length > 90) return true;
-
-  const words = text.split(/\s+/).filter(Boolean);
-
-  if (words.length > 12) return true;
-
-  const genericSocialTitle =
-  text === "instagram" ||
-  text === "instagram recipe" ||
-  text === "tiktok" ||
-  text === "tiktok recipe" ||
-  text === "facebook" ||
-  text === "facebook recipe" ||
-  text.includes(" on instagram") ||
-  text.includes(" on tiktok") ||
-  text.includes(" on facebook") ||
-  text.includes("tiktok - make your day") ||
-  text.includes("make your day") ||
-  text.includes("photos and videos") ||
-  text.includes("watch more") ||
-  text.includes("log in") ||
-  text.includes("sign up");
-
-  const likelyAccountOnlyTitle =
-  words.length < 2 &&
-  !/\b(chili|pizza|pasta|lasagna|tacos|soup|salad|shrimp|chicken|beef|pork|salmon|cookies|cake|pie)\b/i.test(
-    text
-  );
-
-  const sectionOrMetaText =
-    text.includes("ingredients:") ||
-    text.includes("ingredient:") ||
-    text.includes("instructions:") ||
-    text.includes("directions:") ||
-    text.includes("method:") ||
-    text.includes("steps:") ||
-    text.includes("serving ideas") ||
-    text.includes("macros") ||
-    text.includes("nutrition") ||
-    text.includes("calories") ||
-    text.includes("protein") ||
-    text.includes("carbs") ||
-    text.includes("fat:") ||
-    text.includes("time:") ||
-    text.includes("serving:");
-
-  const promotionalNoise =
-    text.includes("follow for") ||
-    text.includes("comment") ||
-    text.includes("save this") ||
-    text.includes("share this") ||
-    text.includes("link in bio") ||
-    text.includes("check out") ||
-    text.includes("take a look");
-
-  const startsLikeInstruction =
-  /^(optional:?\s*)?(add|mix|stir|cook|bake|heat|pour|spread|roast|broil|serve|finish|combine|whisk|drizzle|garnish|assemble|marinate|marinade|preheat|place|arrange|layer|toss|slice|chop|season|top|remove|transfer)\b/i.test(
-    text
-  );
-
-const containsInstructionPhrase =
-  /\b(add|mix|stir|cook|bake|heat|pour|spread|roast|broil|serve|finish|combine|whisk|drizzle|garnish|assemble|marinate|marinade|preheat|place|arrange|layer|toss|season|top)\b/i.test(
-    text
-  ) &&
-  /\b(minutes?|until|bowl|pan|tray|dish|oven|coated|tender|golden|caramelized|halfway|lemon|brightness|sauce|serve|served|seasoning|single layer|above)\b/i.test(
-    text
-  );
-
-  return (
-  genericSocialTitle ||
-  likelyAccountOnlyTitle ||
-  sectionOrMetaText ||
-  promotionalNoise ||
-  startsLikeInstruction ||
-  containsInstructionPhrase
-);
-}
-
-function extractQuotedSocialTitles(text) {
-  const value = String(text || "");
-  const candidates = [];
-
-  const patterns = [
-    /"([^"]{4,120})"/g,
-    /“([^”]{4,120})”/g,
-    /'([^']{4,120})'/g,
-  ];
-
-  for (const pattern of patterns) {
-    let match;
-
-    while ((match = pattern.exec(value)) !== null) {
-      candidates.push(match[1]);
-    }
-  }
-
-  return candidates;
-}
-
-function extractSocialTitleCandidates(text) {
-  const value = String(text || "");
-
-  if (!value.trim()) return [];
-
-  const beforeRecipeSections = value
-    .split(
-      /ingredients?:|instructions?:|directions?:|method:|steps:|macros?:|nutrition:|serving ideas/i
-    )[0]
-    .trim();
-
-  const quotedCandidates = [
-    ...extractQuotedSocialTitles(value),
-    ...extractQuotedSocialTitles(beforeRecipeSections),
-  ];
-
-  const lineCandidates = beforeRecipeSections
-    .split(/\n|\r|\||•|◆|✦|⭐|📝|👩‍🍳|🥩|🍚/)
-    .flatMap((line) => line.split(/(?<=[.!?])\s+/))
-    .map(stripSocialTitleNoise)
-    .filter(Boolean);
-
-  return [...quotedCandidates, ...lineCandidates];
-}
-
-function scoreSocialTitleCandidate(value) {
-  const text = String(value || "").toLowerCase();
-  const words = text.split(/\s+/).filter(Boolean);
-
-  let score = 0;
-
-  if (words.length >= 2 && words.length <= 8) score += 4;
-  if (words.length >= 9 && words.length <= 12) score += 1;
-
-  if (
-    /\b(chicken|beef|shrimp|crab|salmon|pork|steak|rice|bowl|pasta|salad|soup|taco|tacos|potato|potatoes|veggies|vegetables|mushrooms|cookies|cake|pie|sauce|copycat|casserole|skillet|roasted|grilled|baked|slow cooker|air fryer)\b/i.test(
-      text
-    )
-  ) {
-    score += 4;
-  }
-
-  if (text.includes("recipe")) score += 2;
-  if (text.length > 70) score -= 2;
-
-  return score;
-}
-
-function chooseBestSocialTitleCandidate(candidates, sourceUrl = "") {
-  const cleanedCandidates = candidates
-    .map(stripSocialTitleNoise)
-    .map((candidate) =>
-      candidate
-        .replace(/^[^\w]+/g, "")
-        .replace(/[^\w\s&'’/-]+$/g, "")
-        .replace(/\s+/g, " ")
-        .trim()
-    )
-    .filter(Boolean);
-
-  const uniqueCandidates = Array.from(new Set(cleanedCandidates));
-
-  const goodCandidates = uniqueCandidates.filter(
-    (candidate) => !isBadSocialTitleCandidate(candidate)
-  );
-
-  if (goodCandidates.length === 0) {
-    return getSocialFallbackTitle(sourceUrl);
-  }
-
-  return goodCandidates
-    .map((candidate, index) => ({
-      candidate,
-      index,
-      score: scoreSocialTitleCandidate(candidate),
-    }))
-    .sort((a, b) => {
-      if (b.score !== a.score) return b.score - a.score;
-      return a.index - b.index;
-    })[0].candidate;
-}
-
-function findSocialTitleFromCaption(text, sourceUrl = "") {
-  return chooseBestSocialTitleCandidate(
-    extractSocialTitleCandidates(text),
-    sourceUrl
-  );
-}
-
 function cleanSocialRecipeTitle(name, fallbackText = "", sourceUrl = "") {
-  const candidates = [
-    ...extractQuotedSocialTitles(name),
-    ...extractQuotedSocialTitles(fallbackText),
-    ...extractSocialTitleCandidates(name),
-    ...extractSocialTitleCandidates(fallbackText),
-    name,
-  ];
-
-  return chooseBestSocialTitleCandidate(candidates, sourceUrl);
+  return chooseSocialRecipeTitle({
+    rawName: name,
+    fallbackText,
+    sourceUrl,
+  });
 }
-
 function extractRecipeFromJsonLd(jsonLdText, sourceUrl) {
   const rawText = String(jsonLdText || "").trim();
 
@@ -1171,11 +933,14 @@ function extractRecipeFromPage($, sourceUrl, finalUrl) {
 
   const isSocialSource = isSocialRecipeUrl(finalUrl) || isSocialRecipeUrl(sourceUrl);
   const originalRecipeName = recipeName;
+  const socialCaptionParts = isSocialSource
+    ? resolveSocialCaptionParts({
+        rawName: originalRecipeName,
+        description,
+        sourceUrl: finalUrl,
+      })
+    : null;
 
-  // Important:
-  // Do NOT clean the social title here.
-  // Instagram often puts useful recipe caption text in og:title.
-  // We keep the original caption/name alive so Social Caption Rescue can read it.
   const linkedRecipeUrl = finalUrl.includes("allrecipes.com")
     ? findAllrecipesRecipeLink($, finalUrl, recipeName)
     : "";
@@ -1219,16 +984,24 @@ function extractRecipeFromPage($, sourceUrl, finalUrl) {
         : "",
     },
     debug: {
-  foundRecipe: !!recipe,
-  ingredientsCount: ingredients.length,
-  instructionsCount: instructions.length,
-  finalUrl,
-  linkedRecipeUrl,
-  description,
-  isSocialSource,
-  originalRecipeName: isSocialSource ? originalRecipeName : undefined,
-  socialTitleCleaned: isSocialSource && originalRecipeName !== recipeName,
-},
+      foundRecipe: !!recipe,
+      ingredientsCount: ingredients.length,
+      instructionsCount: instructions.length,
+      finalUrl,
+      linkedRecipeUrl,
+      description,
+      isSocialSource,
+      originalRecipeName: isSocialSource ? originalRecipeName : undefined,
+      socialCaptionParts: socialCaptionParts
+        ? {
+            platform: socialCaptionParts.platform,
+            accountName: socialCaptionParts.accountName,
+            rawCaption: socialCaptionParts.rawCaption,
+            titleCandidate: socialCaptionParts.titleCandidate,
+            fallbackTitle: socialCaptionParts.fallbackTitle,
+          }
+        : undefined,
+    },
   };
 }
 
@@ -1289,24 +1062,29 @@ function resultNeedsCaptionRescue(result) {
 }
 
 function buildCaptionRescueText(result) {
-  const parts = [
-    // Important:
-    // For Instagram/social posts, the full caption often arrives as the original
-    // og:title. We clean the visible recipe name, but still need the original
-    // caption text for AI rescue.
-    result.debug?.originalRecipeName,
-    result.debug?.description,
-    result.recipe?.fallbackText,
-    result.name,
-    result.sourceUrl,
-  ]
-    .filter(Boolean)
-    .map((part) => String(part).trim())
-    .filter(Boolean);
+  const sourceUrl =
+    result.sourceUrl || result.importedFromUrl || result.recipe?.sourceUrl || "";
 
-  return Array.from(new Set(parts)).join("\n\n");
+  const socialCaptionParts = resolveSocialCaptionParts({
+    rawName: result.debug?.originalRecipeName || result.name || result.recipe?.name || "",
+    description: result.debug?.description || "",
+    fallbackText: result.recipe?.fallbackText || "",
+    sourceUrl,
+  });
+
+  result.debug = {
+    ...(result.debug || {}),
+    socialCaptionPartsForRescue: {
+      platform: socialCaptionParts.platform,
+      accountName: socialCaptionParts.accountName,
+      rawCaption: socialCaptionParts.rawCaption,
+      titleCandidate: socialCaptionParts.titleCandidate,
+      fallbackTitle: socialCaptionParts.fallbackTitle,
+    },
+  };
+
+  return socialCaptionParts.rescueText;
 }
-
 function looksLikeRecipeCaption(text) {
   const value = String(text || "").toLowerCase();
 
@@ -1357,11 +1135,14 @@ async function rescueSocialCaptionIfUseful(result) {
 
     const parsed = await parseRecipeTextWithAI(rescueText);
 
+    const rescueSourceUrl =
+      result.sourceUrl || result.importedFromUrl || result.recipe?.sourceUrl || "";
+
     const rescuedName = cleanSocialRecipeTitle(
-  parsed.name || result.name || "Saved Recipe",
-  rescueText,
-  result.sourceUrl || result.importedFromUrl || result.recipe?.sourceUrl || ""
-);
+      parsed.name || result.name || "Saved Recipe",
+      rescueText,
+      rescueSourceUrl
+    );
 
     const rescuedIngredients = Array.isArray(parsed.ingredients)
       ? parsed.ingredients.map(cleanHtmlEntities).map(cleanText).filter(Boolean)
@@ -1421,18 +1202,19 @@ async function rescueSocialCaptionIfUseful(result) {
     return result;
   }
 }
+
 function cleanSocialFallbackTitleIfNeeded(result) {
   if (!result?.success || !result?.recipe) return result;
 
+  const sourceUrl =
+    result.sourceUrl || result.importedFromUrl || result.recipe?.sourceUrl || "";
+
   const isSocialSource =
-    isSocialRecipeUrl(result.sourceUrl) ||
-    isSocialRecipeUrl(result.importedFromUrl) ||
-    isSocialRecipeUrl(result.recipe?.sourceUrl) ||
-    result.debug?.isSocialSource === true;
+    isSocialRecipeUrl(sourceUrl) || result.debug?.isSocialSource === true;
 
   if (!isSocialSource) return result;
 
-  // If AI rescue worked, keep the rescued recipe title.
+  // If AI rescue worked, keep the real rescued recipe title.
   if (result.debug?.socialCaptionRescue === true) {
     return result;
   }
@@ -1443,34 +1225,23 @@ function cleanSocialFallbackTitleIfNeeded(result) {
   const hasInstructions =
     Array.isArray(result.instructions) && result.instructions.length > 0;
 
-  // If we found real recipe details, keep the imported title.
-  // The cleanup is only for weak social fallback cards.
-  if (hasIngredients || hasInstructions) {
+  // If a social post somehow produced a full recipe without rescue, preserve it.
+  if (hasIngredients && hasInstructions) {
     return result;
   }
 
   const originalName =
-    result.debug?.originalRecipeName ||
-    result.name ||
-    result.recipe?.name ||
-    "";
+    result.debug?.originalRecipeName || result.name || result.recipe?.name || "";
 
-  const rescueText = [
-    originalName,
-    result.debug?.description,
-    result.recipe?.fallbackText,
-    result.sourceUrl,
-  ]
-    .filter(Boolean)
-    .map((part) => String(part).trim())
-    .filter(Boolean)
-    .join("\n\n");
+  const socialCaptionParts = resolveSocialCaptionParts({
+    rawName: originalName,
+    description: result.debug?.description || "",
+    fallbackText: result.recipe?.fallbackText || "",
+    sourceUrl,
+  });
 
-  const cleanedName = cleanSocialRecipeTitle(
-    originalName,
-    rescueText,
-    result.sourceUrl || result.importedFromUrl || result.recipe?.sourceUrl || ""
-  );
+  const cleanedName =
+    socialCaptionParts.titleCandidate || socialCaptionParts.fallbackTitle;
 
   result.name = cleanedName;
   result.recipe.name = cleanedName;
@@ -1478,10 +1249,22 @@ function cleanSocialFallbackTitleIfNeeded(result) {
     .toString()
     .slice(-4)}`;
 
+  // Keep the useful raw caption/source hidden in fallbackText for manual finishing.
+  if (socialCaptionParts.rescueText) {
+    result.recipe.fallbackText = socialCaptionParts.rescueText;
+  }
+
   result.debug = {
     ...(result.debug || {}),
     socialFallbackTitleCleaned: true,
     originalSocialFallbackName: originalName,
+    socialCaptionPartsForFallback: {
+      platform: socialCaptionParts.platform,
+      accountName: socialCaptionParts.accountName,
+      rawCaption: socialCaptionParts.rawCaption,
+      titleCandidate: socialCaptionParts.titleCandidate,
+      fallbackTitle: socialCaptionParts.fallbackTitle,
+    },
   };
 
   return result;
@@ -2413,7 +2196,7 @@ ${recipe.instructions}
       notes: recipe.notes || "",
     };
   }
-  } 
+}
 
 // =====================================================
 // Server start
