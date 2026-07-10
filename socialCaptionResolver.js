@@ -151,6 +151,74 @@ function cleanTitleCandidate(value) {
   return text;
 }
 
+function titleCaseWords(value) {
+  return normalizeSpaces(value)
+    .split(" ")
+    .map((word) => {
+      if (!word) return word;
+      return word.charAt(0).toUpperCase() + word.slice(1).toLowerCase();
+    })
+    .join(" ")
+    .trim();
+}
+
+function humanizeHashtag(tag) {
+  const raw = String(tag || "")
+    .replace(/^#/, "")
+    .replace(/[_-]+/g, " ")
+    .trim();
+
+  if (!raw) return "";
+
+  const spaced = raw
+    .replace(/([a-z])([A-Z])/g, "$1 $2")
+    .replace(/(veggies|vegetables|shrimp|prawns|chicken|beef|salmon|pasta|rice|tacos|potatoes|mushrooms|cabbage|cups|skillet|casserole|soup|salad|pizza|garlic|butter|roasted|grilled|baked|stuffed)/gi, " $1 ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  return titleCaseWords(spaced);
+}
+
+function scoreHashtagTitleCandidate(value) {
+  const text = normalizeSpaces(value).toLowerCase();
+  const words = text.split(/\s+/).filter(Boolean);
+
+  let score = 0;
+
+  if (words.length >= 2 && words.length <= 5) score += 3;
+  if (FOOD_TITLE_WORDS.test(text)) score += 5;
+  if (/\b(roasted|grilled|baked|stuffed|garlic|butter|cheesy|slow cooker|air fryer)\b/i.test(text)) {
+    score += 3;
+  }
+  if (/\b(recipe|recipes|food|foods|foodie|foodinspo|eating|healthy|comfortfood|yummy|yum)\b/i.test(text)) {
+    score -= 5;
+  }
+  if (words.length > 6) score -= 4;
+
+  return score;
+}
+
+function extractHashtagTitleCandidates(value) {
+  const tags = String(value || "").match(/#[A-Za-z0-9_-]+/g) || [];
+
+  return tags
+    .map(humanizeHashtag)
+    .filter(Boolean)
+    .filter((candidate) => FOOD_TITLE_WORDS.test(candidate))
+    .map((candidate, index) => ({
+      candidate,
+      index,
+      score: scoreHashtagTitleCandidate(candidate),
+    }))
+    .filter((item) => item.score > 0)
+    .sort((a, b) => {
+      if (b.score !== a.score) return b.score - a.score;
+      return a.index - b.index;
+    })
+    .map((item) => item.candidate);
+}
+
+
 function extractTitleCandidatesFromCaption(value) {
   const caption = cleanCaptionText(value);
 
@@ -345,6 +413,7 @@ function compactRescueParts(parts) {
   return results;
 }
 
+
 export function resolveSocialCaptionParts({
   rawName = "",
   description = "",
@@ -371,16 +440,24 @@ export function resolveSocialCaptionParts({
 
   const rawCaption = chooseBestCaption([...quotedCaptions, ...unwrappedCandidates]);
 
+  const hashtagTitleCandidates = extractHashtagTitleCandidates([
+    rawCaption,
+    description,
+    rawName,
+    fallbackText,
+  ].join("\n\n"));
+
   const titleCandidates = [
     ...extractTitleCandidatesFromCaption(rawCaption),
     ...extractTitleCandidatesFromCaption(rawName),
     ...extractTitleCandidatesFromCaption(description),
     ...quotedCaptions.map(cleanTitleCandidate),
+    ...hashtagTitleCandidates,
   ].filter(Boolean);
 
   const titleCandidate = chooseBestTitle(titleCandidates, accountName);
 
-    const rescueParts = compactRescueParts([
+  const rescueParts = compactRescueParts([
     rawCaption,
     description,
     rawName,
@@ -394,7 +471,7 @@ export function resolveSocialCaptionParts({
     accountName,
     rawCaption,
     titleCandidate,
-    rescueText: Array.from(new Set(rescueParts)).join("\n\n"),
+    rescueText: rescueParts.join("\n\n"),
     titleCandidates: Array.from(new Set(titleCandidates)).slice(0, 8),
   };
 }
