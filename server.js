@@ -702,18 +702,27 @@ function isBadSocialTitleCandidate(value) {
   if (words.length > 12) return true;
 
   const genericSocialTitle =
-    text === "instagram" ||
-    text === "instagram recipe" ||
-    text === "tiktok" ||
-    text === "tiktok recipe" ||
-    text === "facebook" ||
-    text === "facebook recipe" ||
-    text.includes("tiktok - make your day") ||
-    text.includes("make your day") ||
-    text.includes("photos and videos") ||
-    text.includes("watch more") ||
-    text.includes("log in") ||
-    text.includes("sign up");
+  text === "instagram" ||
+  text === "instagram recipe" ||
+  text === "tiktok" ||
+  text === "tiktok recipe" ||
+  text === "facebook" ||
+  text === "facebook recipe" ||
+  text.includes(" on instagram") ||
+  text.includes(" on tiktok") ||
+  text.includes(" on facebook") ||
+  text.includes("tiktok - make your day") ||
+  text.includes("make your day") ||
+  text.includes("photos and videos") ||
+  text.includes("watch more") ||
+  text.includes("log in") ||
+  text.includes("sign up");
+
+  const likelyAccountOnlyTitle =
+  words.length < 2 &&
+  !/\b(chili|pizza|pasta|lasagna|tacos|soup|salad|shrimp|chicken|beef|pork|salmon|cookies|cake|pie)\b/i.test(
+    text
+  );
 
   const sectionOrMetaText =
     text.includes("ingredients:") ||
@@ -755,12 +764,13 @@ const containsInstructionPhrase =
   );
 
   return (
-    genericSocialTitle ||
-    sectionOrMetaText ||
-    promotionalNoise ||
-    startsLikeInstruction ||
-    containsInstructionPhrase
-  );
+  genericSocialTitle ||
+  likelyAccountOnlyTitle ||
+  sectionOrMetaText ||
+  promotionalNoise ||
+  startsLikeInstruction ||
+  containsInstructionPhrase
+);
 }
 
 function extractQuotedSocialTitles(text) {
