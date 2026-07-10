@@ -611,24 +611,30 @@ function isBadSocialTitleCandidate(value) {
   if (!text) return true;
   if (text.length < 3) return true;
 
-  return (
-    text.includes("ingredients:") ||
-    text.includes("ingredient:") ||
-    text.includes("instructions:") ||
-    text.includes("directions:") ||
-    text.includes("method:") ||
-    text.includes("steps:") ||
-    text.includes("serving ideas") ||
-    text.includes("macros") ||
-    text.includes("nutrition") ||
-    text.includes("calories") ||
-    text.includes("protein") ||
-    text.includes("follow for") ||
-    text.includes("comment") ||
-    text.includes("save this") ||
-    text.includes("share this") ||
-    text.includes("link in bio")
+  const startsLikeInstruction =
+  /^(add|mix|stir|cook|bake|heat|pour|spread|roast|broil|serve|finish|combine|whisk|drizzle|garnish|assemble|marinate|preheat|place|toss|slice|chop|season)\b/i.test(
+    text
   );
+
+return (
+  startsLikeInstruction ||
+  text.includes("ingredients:") ||
+  text.includes("ingredient:") ||
+  text.includes("instructions:") ||
+  text.includes("directions:") ||
+  text.includes("method:") ||
+  text.includes("steps:") ||
+  text.includes("serving ideas") ||
+  text.includes("macros") ||
+  text.includes("nutrition") ||
+  text.includes("calories") ||
+  text.includes("protein") ||
+  text.includes("follow for") ||
+  text.includes("comment") ||
+  text.includes("save this") ||
+  text.includes("share this") ||
+  text.includes("link in bio")
+);
 }
 
 function findSocialTitleFromCaption(text) {
