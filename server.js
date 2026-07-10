@@ -742,17 +742,17 @@ function isBadSocialTitleCandidate(value) {
     text.includes("take a look");
 
   const startsLikeInstruction =
-    /^(optional:?\s*)?(add|mix|stir|cook|bake|heat|pour|spread|roast|broil|serve|finish|combine|whisk|drizzle|garnish|assemble|marinate|preheat|place|toss|slice|chop|season|top|remove|transfer)\b/i.test(
-      text
-    );
+  /^(optional:?\s*)?(add|mix|stir|cook|bake|heat|pour|spread|roast|broil|serve|finish|combine|whisk|drizzle|garnish|assemble|marinate|marinade|preheat|place|arrange|layer|toss|slice|chop|season|top|remove|transfer)\b/i.test(
+    text
+  );
 
-  const containsInstructionPhrase =
-    /\b(add|mix|stir|cook|bake|heat|pour|spread|roast|broil|serve|finish|combine|whisk|drizzle|garnish|assemble|marinate|preheat|place|toss|season|top)\b/i.test(
-      text
-    ) &&
-    /\b(minutes?|until|bowl|pan|tray|oven|coated|tender|golden|caramelized|halfway|lemon|brightness|sauce|serve|served)\b/i.test(
-      text
-    );
+const containsInstructionPhrase =
+  /\b(add|mix|stir|cook|bake|heat|pour|spread|roast|broil|serve|finish|combine|whisk|drizzle|garnish|assemble|marinate|marinade|preheat|place|arrange|layer|toss|season|top)\b/i.test(
+    text
+  ) &&
+  /\b(minutes?|until|bowl|pan|tray|dish|oven|coated|tender|golden|caramelized|halfway|lemon|brightness|sauce|serve|served|seasoning|single layer|above)\b/i.test(
+    text
+  );
 
   return (
     genericSocialTitle ||
