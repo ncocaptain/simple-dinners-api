@@ -1095,11 +1095,32 @@ function resultNeedsCaptionRescue(result) {
 }
 
 function buildCaptionRescueText(result) {
+  const userCaptionText =
+    result.debug?.userCaptionTextProvided && result.debug?.userCaptionText
+      ? String(result.debug.userCaptionText).trim()
+      : "";
+
+  // Caption Assist rule:
+  // If the user pasted caption text, use that as the primary rescue source.
+  // This prevents Instagram metadata from winning over the caption the user intentionally provided.
+  if (userCaptionText) {
+    const parts = [userCaptionText, result.sourceUrl]
+      .filter(Boolean)
+      .map((part) => String(part).trim())
+      .filter(Boolean);
+
+    return Array.from(new Set(parts)).join("\n\n");
+  }
+
   const sourceUrl =
     result.sourceUrl || result.importedFromUrl || result.recipe?.sourceUrl || "";
 
   const socialCaptionParts = resolveSocialCaptionParts({
-    rawName: result.debug?.originalRecipeName || result.name || result.recipe?.name || "",
+    rawName:
+      result.debug?.originalRecipeName ||
+      result.name ||
+      result.recipe?.name ||
+      "",
     description: result.debug?.description || "",
     fallbackText: result.recipe?.fallbackText || "",
     sourceUrl,
@@ -1266,10 +1287,17 @@ function cleanSocialFallbackTitleIfNeeded(result) {
   const originalName =
     result.debug?.originalRecipeName || result.name || result.recipe?.name || "";
 
+  const userCaptionText =
+    result.debug?.userCaptionTextProvided && result.debug?.userCaptionText
+      ? String(result.debug.userCaptionText).trim()
+      : "";
+
   const socialCaptionParts = resolveSocialCaptionParts({
     rawName: originalName,
     description: result.debug?.description || "",
-    fallbackText: result.recipe?.fallbackText || "",
+    fallbackText: [userCaptionText, result.recipe?.fallbackText || ""]
+      .filter(Boolean)
+      .join("\n\n"),
     sourceUrl,
   });
 
