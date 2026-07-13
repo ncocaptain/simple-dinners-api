@@ -11,6 +11,12 @@ const INSTRUCTION_VERB_RE = /\b(add|mix|stir|cook|bake|heat|pour|spread|roast|br
 
 const INSTRUCTION_CONTEXT_RE = /\b(minutes?|until|bowl|pan|tray|dish|oven|coated|tender|golden|caramelized|halfway|lemon|brightness|sauce|serve|served|seasoning|single layer|above|mixture|skillet|baking dish|air fryer)\b/i;
 
+const MEASUREMENT_TITLE_RE =
+  /^(?:\d+(?:\.\d+)?|\d+\/\d+|½|¼|¾|one|two|three|four|five|six)\s*(?:lb|lbs|pound|pounds|oz|ounces?|cups?|tbsp|tablespoons?|tsp|teaspoons?|cloves?|cans?|packages?|sticks?)\b/i;
+
+const GENERIC_RECIPE_CATEGORY_RE =
+  /^(?:shrimp|chicken|beef|pork|salmon|fish|seafood|pasta|rice|taco|tacos|soup|salad|dessert|dinner|breakfast|lunch|air fryer|slow cooker|crockpot|keto|healthy|easy|quick|low carb|high protein)\s+recipes?$/i;
+
 function normalizeSpaces(value) {
   return String(value || "")
     .replace(/\s+/g, " ")
@@ -303,14 +309,20 @@ function isBadTitleCandidate(value, accountName = "") {
   const likelyAccountOnlyTitle =
     words.length <= 3 && !FOOD_TITLE_WORDS.test(text) && /kitchen|recipes?|food|macro|melanie|olivia/i.test(text);
 
+    const startsWithMeasurement = MEASUREMENT_TITLE_RE.test(text);
+
+const genericRecipeCategory = GENERIC_RECIPE_CATEGORY_RE.test(text);
+
   return (
-    genericSocialTitle ||
-    likelyAccountOnlyTitle ||
-    sectionOrMetaText ||
-    promotionalNoise ||
-    startsLikeInstruction ||
-    containsInstructionPhrase
-  );
+  genericSocialTitle ||
+  likelyAccountOnlyTitle ||
+  startsWithMeasurement ||
+  genericRecipeCategory ||
+  sectionOrMetaText ||
+  promotionalNoise ||
+  startsLikeInstruction ||
+  containsInstructionPhrase
+);
 }
 
 function scoreTitleCandidate(value) {
