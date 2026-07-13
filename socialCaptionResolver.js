@@ -3,7 +3,8 @@
 // Pinterest-style candidate/filter/fallback helper for social recipe posts
 // =====================================================
 
-const FOOD_TITLE_WORDS = /\b(chicken|beef|shrimp|prawn|prawns|crab|salmon|pork|steak|sausage|turkey|rice|bowl|bowls|pasta|noodle|noodles|salad|soup|taco|tacos|potato|potatoes|veggie|veggies|vegetable|vegetables|mushroom|mushrooms|cookie|cookies|cake|pie|sauce|copycat|casserole|skillet|roasted|grilled|baked|fried|slow cooker|air fryer|garlic|butter|cheese|cheesy|stuffed|marinade|meatball|meatballs|chili|pizza|lasagna|cabbage|cups|wraps|sandwich|burgers?|dessert|brownies?)\b/i;
+const FOOD_TITLE_WORDS =
+  /\b(chicken|beef|shrimp|prawn|prawns|crab|salmon|pork|steak|sausage|turkey|tofu|rice|bowl|bowls|pasta|noodle|noodles|ramen|salad|soup|curry|taco|tacos|potato|potatoes|veggie|veggies|vegetable|vegetables|mushroom|mushrooms|cauliflower|broccoli|zucchini|avocado|egg|eggs|bread|muffin|muffins|waffle|waffles|pancake|pancakes|lentil|lentils|chickpea|chickpeas|bean|beans|quinoa|oats|banana|smoothie|cookie|cookies|cake|pie|sauce|copycat|casserole|skillet|roasted|grilled|baked|fried|slow cooker|air fryer|garlic|butter|cheese|cheesy|stuffed|marinade|meatball|meatballs|chili|pizza|lasagna|cabbage|cups|wraps|sandwich|burgers?|dessert|brownies?)\b/i;
 
 const INSTRUCTION_START_RE = /^(optional:?\s*)?(add|mix|stir|cook|bake|heat|pour|spread|roast|broil|serve|finish|combine|whisk|drizzle|garnish|assemble|marinate|marinade|preheat|place|arrange|layer|toss|slice|chop|season|top|remove|transfer|fold|cover|simmer|boil|grill|fry)\b/i;
 
@@ -307,7 +308,7 @@ function isBadTitleCandidate(value, accountName = "") {
     INSTRUCTION_VERB_RE.test(text) && INSTRUCTION_CONTEXT_RE.test(text);
 
   const likelyAccountOnlyTitle =
-    words.length <= 3 && !FOOD_TITLE_WORDS.test(text) && /kitchen|recipes?|food|macro|melanie|olivia/i.test(text);
+    words.length <= 3 && !FOOD_TITLE_WORDS.test(text) && /kitchen|recipes?|food|macro/i.test(text);
 
     const startsWithMeasurement = MEASUREMENT_TITLE_RE.test(text);
 
