@@ -13,10 +13,10 @@ const INSTRUCTION_VERB_RE =
   /\b(add|mix|stir|cook|bake|heat|pour|spread|roast|broil|serve|finish|combine|whisk|drizzle|garnish|assemble|marinate|marinade|preheat|place|arrange|layer|toss|season|top|cover|simmer|boil|grill|fry|build|melt|saut(?:e|é)|reserve|drain|nestle|spoon)\b/i;
 
 const INSTRUCTION_CONTEXT_RE =
-  /\b(minutes?|until|bowl|pan|pot|tray|dish|oven|coated|tender|fragrant|golden|caramelized|halfway|lemon|brightness|sauce|serve|served|seasoning|single layer|above|mixture|skillet|baking dish|air fryer|remaining butter|chowder base|onion|garlic|pasta water|lobster tails?)\b/i;
-
-const INSTRUCTION_CONTEXT_RE =
   /\b(minutes?|until|bowl|pan|pot|tray|dish|oven|coated|tender|fragrant|golden|caramelized|halfway|lemon|brightness|sauce|serve|served|seasoning|single layer|above|mixture|skillet|baking dish|air fryer|remaining butter|chowder base|onion|garlic|pasta water|lobster tails?|generously|reserved)\b/i;
+
+const MEASUREMENT_TITLE_RE =
+  /^(?:(?:\d+(?:\.\d+)?|\d+\/\d+|½|¼|¾|one|two|three|four|five|six)\s*)?(?:lb|lbs|pound|pounds|oz|ounces?|cup|cups|tbsp|tablespoons?|tsp|teaspoons?|clove|cloves|can|cans|package|packages|stick|sticks)\b/i;
 
 const GENERIC_RECIPE_CATEGORY_RE =
   /^(?:shrimp|chicken|beef|pork|salmon|fish|seafood|pasta|rice|taco|tacos|soup|salad|dessert|dinner|breakfast|lunch|air fryer|slow cooker|crockpot|keto|healthy|easy|quick|low carb|high protein)(?:\s+recipes?)?$/i;
