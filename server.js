@@ -1093,18 +1093,14 @@ function looksLikeRecipeCaption(text) {
   if (value.length < 120) return false;
 
   const hasIngredientSignal =
-    value.includes("ingredients:") ||
-    value.includes("ingredient:") ||
-    value.includes("you need") ||
-    value.includes("what you need");
+  /ingredients?\s*[:~\-]/i.test(value) ||
+  value.includes("you need") ||
+  value.includes("what you need");
 
-  const hasInstructionSignal =
-    value.includes("instructions:") ||
-    value.includes("directions:") ||
-    value.includes("method:") ||
-    value.includes("steps:") ||
-    /\b1\s*[-.)]/.test(value) ||
-    /1️⃣|2️⃣|3️⃣|4️⃣|5️⃣/.test(value);
+const hasInstructionSignal =
+  /(instructions?|directions?|method|steps?)\s*[:~\-]/i.test(value) ||
+  /\b1\s*[-.)]/.test(value) ||
+  /1️⃣|2️⃣|3️⃣|4️⃣|5️⃣/.test(value);
 
   const hasCookingWords =
     /mix|stir|cook|bake|heat|add|combine|whisk|serve|marinate|drizzle|garnish|assemble/i.test(

@@ -133,13 +133,15 @@ function cleanTitleCandidate(value) {
   let text = cleanCaptionText(value);
 
   text = text
-    .split(/ingredients?:|instructions?:|directions?:|method:|steps:|macros?:|nutrition:|serving ideas/i)[0]
+    .split(/ingredients?\s*[:~\-]|instructions?\s*[:~\-]|directions?\s*[:~\-]|method\s*[:~\-]|steps?\s*[:~\-]|macros?\s*[:~\-]|nutrition\s*[:~\-]|serving ideas/i)[0]
     .replace(/https?:\/\/\S+/gi, " ")
     .replace(/www\.\S+/gi, " ")
     .replace(/#[A-Za-z0-9_-]+/g, " ")
     .replace(/@\w+/g, " ")
     .replace(/\bfull recipe\b.*$/i, " ")
     .replace(/\bfull details\b.*$/i, " ")
+    .replace(/\bturn dinner\b.*$/i, " ")
+.replace(/\btakes? .+ to a whole new level\b.*$/i, " ")
     .replace(/\bstep by step\b.*$/i, " ")
     .replace(/\bon my page\b.*$/i, " ")
     .replace(/\bright under my profile picture\b.*$/i, " ")
@@ -235,7 +237,7 @@ function extractTitleCandidatesFromCaption(value) {
   if (!caption) return [];
 
   const beforeSections = caption
-    .split(/ingredients?:|instructions?:|directions?:|method:|steps:|macros?:|nutrition:|serving ideas/i)[0]
+    .split(/ingredients?\s*[:~\-]|instructions?\s*[:~\-]|directions?\s*[:~\-]|method\s*[:~\-]|steps?\s*[:~\-]|macros?\s*[:~\-]|nutrition\s*[:~\-]|serving ideas/i)[0]
     .trim();
 
   const pieces = [
