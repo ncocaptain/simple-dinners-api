@@ -19,7 +19,7 @@ const MEASUREMENT_TITLE_RE =
   /^(?:\d+(?:\.\d+)?|\d+\/\d+|½|¼|¾|one|two|three|four|five|six)\s*(?:lb|lbs|pound|pounds|oz|ounces?|cups?|tbsp|tablespoons?|tsp|teaspoons?|cloves?|cans?|packages?|sticks?)\b/i;
 
 const GENERIC_RECIPE_CATEGORY_RE =
-  /^(?:shrimp|chicken|beef|pork|salmon|fish|seafood|pasta|rice|taco|tacos|soup|salad|dessert|dinner|breakfast|lunch|air fryer|slow cooker|crockpot|keto|healthy|easy|quick|low carb|high protein)\s+recipes?$/i;
+  /^(?:shrimp|chicken|beef|pork|salmon|fish|seafood|pasta|rice|taco|tacos|soup|salad|dessert|dinner|breakfast|lunch|air fryer|slow cooker|crockpot|keto|healthy|easy|quick|low carb|high protein)(?:\s+recipes?)?$/i;
 
 function normalizeSpaces(value) {
   return String(value || "")
