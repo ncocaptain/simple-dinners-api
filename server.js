@@ -85,7 +85,14 @@ app.post("/resolve-pinterest", async (request, reply) => {
 // =====================================================
 
 app.post("/import-recipe", async (request, reply) => {
-  const { url } = request.body || {};
+  const { url, captionText, sharedText } = request.body || {};
+
+const userCaptionText =
+  typeof captionText === "string" && captionText.trim()
+    ? captionText.trim()
+    : typeof sharedText === "string" && sharedText.trim()
+    ? sharedText.trim()
+    : "";
 
   if (!url) {
     return reply.code(400).send({ error: "URL required" });
@@ -247,8 +254,9 @@ app.post("/import-recipe", async (request, reply) => {
       instructionsCount: firstResult?.instructions?.length || 0,
     });
 
-    firstResult = await rescueSocialCaptionIfUseful(firstResult);
-    firstResult = cleanSocialFallbackTitleIfNeeded(firstResult);
+    firstResult = attachUserCaptionTextToResult(firstResult, userCaptionText);
+firstResult = await rescueSocialCaptionIfUseful(firstResult);
+firstResult = cleanSocialFallbackTitleIfNeeded(firstResult);
 
     console.log("Recipe result after caption rescue check:", {
       successLevel: firstResult?.successLevel,
@@ -1038,6 +1046,29 @@ function instructionsMentionEnoughIngredients(ingredientsText, instructionsText)
   return matchedCount >= Math.min(4, Math.ceil(uniqueWords.length * 0.35));
 }
 
+function attachUserCaptionTextToResult(result, captionText = "") {
+  const cleanedCaption = String(captionText || "").trim();
+
+  if (!cleanedCaption || !result?.success || !result?.recipe) {
+    return result;
+  }
+
+  const existingFallbackText = String(result.recipe.fallbackText || "").trim();
+
+  result.recipe.fallbackText = [cleanedCaption, existingFallbackText]
+    .filter(Boolean)
+    .join("\n\n");
+
+  result.debug = {
+    ...(result.debug || {}),
+    userCaptionTextProvided: true,
+    userCaptionTextLength: cleanedCaption.length,
+    userCaptionText: cleanedCaption,
+  };
+
+  return result;
+}
+
 // =====================================================
 // Social caption rescue
 // Used when Instagram/social pages return caption text but no structured recipe
@@ -1093,12 +1124,16 @@ function looksLikeRecipeCaption(text) {
   if (value.length < 120) return false;
 
   const hasIngredientSignal =
-  /ingredients?\s*[:~\-]/i.test(value) ||
+  /ingredients?(?:\s*\([^)]*\))?\s*[:~\-]/i.test(value) ||
   value.includes("you need") ||
-  value.includes("what you need");
+  value.includes("what you need") ||
+  value.includes("what you’ll need") ||
+  value.includes("what you'll need");
 
 const hasInstructionSignal =
-  /(instructions?|directions?|method|steps?)\s*[:~\-]/i.test(value) ||
+  /(instructions?|directions?|method|steps?|how to make)(?:\s*\([^)]*\))?\s*[:~\-]/i.test(
+    value
+  ) ||
   /\b1\s*[-.)]/.test(value) ||
   /1️⃣|2️⃣|3️⃣|4️⃣|5️⃣/.test(value);
 
