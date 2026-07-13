@@ -45,6 +45,8 @@ if (!openaiApiKey) {
   );
 }
 
+const SOURCE_STEPS_PLACEHOLDER = "Steps available at source link!";
+
 app.get("/", async () => {
   return {
     ok: true,
@@ -784,7 +786,7 @@ function extractRecipeFromJsonLd(jsonLdText, sourceUrl) {
       ingredients: hasIngredients ? ingredients.join("\n") : "",
       instructions: hasInstructions
         ? instructions.join("\n")
-        : "Steps available at source link!",
+        : SOURCE_STEPS_PLACEHOLDER,
       photoUrl: image,
       slug: `${slugify(recipeName)}-${Date.now().toString().slice(-4)}`,
       sourceUrl,
@@ -973,7 +975,7 @@ function extractRecipeFromPage($, sourceUrl, finalUrl) {
       ingredients: hasIngredients ? ingredients.join("\n") : "",
       instructions: hasInstructions
         ? instructions.join("\n")
-        : "Steps available at source link!",
+        : SOURCE_STEPS_PLACEHOLDER,
       photoUrl: image,
       slug: `${slugify(recipeName)}-${Date.now().toString().slice(-4)}`,
       sourceUrl: finalUrl,
@@ -1051,7 +1053,7 @@ function resultNeedsCaptionRescue(result) {
   const hasInstructions =
     typeof result.recipe.instructions === "string" &&
     result.recipe.instructions.trim().length > 0 &&
-    result.recipe.instructions !== "Steps available at source link!";
+    result.recipe.instructions !== SOURCE_STEPS_PLACEHOLDER;
 
   if (hasIngredients || hasInstructions) return false;
 
@@ -1285,7 +1287,7 @@ async function applyAiCleanupToResult(result) {
   const hasInstructions =
     typeof result.recipe.instructions === "string" &&
     result.recipe.instructions.trim().length > 0 &&
-    result.recipe.instructions !== "Steps available at source link!";
+    result.recipe.instructions !== SOURCE_STEPS_PLACEHOLDER;
 
   if (!hasIngredients && !hasInstructions) return result;
 
