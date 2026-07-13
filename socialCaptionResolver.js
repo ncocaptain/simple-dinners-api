@@ -6,11 +6,14 @@
 const FOOD_TITLE_WORDS =
   /\b(chicken|beef|shrimp|prawn|prawns|crab|salmon|pork|steak|sausage|turkey|tofu|rice|bowl|bowls|pasta|noodle|noodles|ramen|salad|soup|curry|taco|tacos|potato|potatoes|veggie|veggies|vegetable|vegetables|mushroom|mushrooms|cauliflower|broccoli|zucchini|avocado|egg|eggs|bread|muffin|muffins|waffle|waffles|pancake|pancakes|lentil|lentils|chickpea|chickpeas|bean|beans|quinoa|oats|banana|smoothie|cookie|cookies|cake|pie|sauce|copycat|casserole|skillet|roasted|grilled|baked|fried|slow cooker|air fryer|garlic|butter|cheese|cheesy|stuffed|marinade|meatball|meatballs|chili|pizza|lasagna|cabbage|cups|wraps|sandwich|burgers?|dessert|brownies?)\b/i;
 
-const INSTRUCTION_START_RE = /^(optional:?\s*)?(add|mix|stir|cook|bake|heat|pour|spread|roast|broil|serve|finish|combine|whisk|drizzle|garnish|assemble|marinate|marinade|preheat|place|arrange|layer|toss|slice|chop|season|top|remove|transfer|fold|cover|simmer|boil|grill|fry)\b/i;
+const INSTRUCTION_START_RE =
+  /^(optional:?\s*)?(add|mix|stir|cook|bake|heat|pour|spread|roast|broil|serve|finish|combine|whisk|drizzle|garnish|assemble|marinate|marinade|preheat|place|arrange|layer|toss|slice|chop|season|top|remove|transfer|fold|cover|simmer|boil|grill|fry|build|melt)\b/i;
 
-const INSTRUCTION_VERB_RE = /\b(add|mix|stir|cook|bake|heat|pour|spread|roast|broil|serve|finish|combine|whisk|drizzle|garnish|assemble|marinate|marinade|preheat|place|arrange|layer|toss|season|top|cover|simmer|boil|grill|fry)\b/i;
+const INSTRUCTION_VERB_RE =
+  /\b(add|mix|stir|cook|bake|heat|pour|spread|roast|broil|serve|finish|combine|whisk|drizzle|garnish|assemble|marinate|marinade|preheat|place|arrange|layer|toss|season|top|cover|simmer|boil|grill|fry|build|melt)\b/i;
 
-const INSTRUCTION_CONTEXT_RE = /\b(minutes?|until|bowl|pan|tray|dish|oven|coated|tender|golden|caramelized|halfway|lemon|brightness|sauce|serve|served|seasoning|single layer|above|mixture|skillet|baking dish|air fryer)\b/i;
+const INSTRUCTION_CONTEXT_RE =
+  /\b(minutes?|until|bowl|pan|pot|tray|dish|oven|coated|tender|golden|caramelized|halfway|lemon|brightness|sauce|serve|served|seasoning|single layer|above|mixture|skillet|baking dish|air fryer|remaining butter|chowder base)\b/i;
 
 const MEASUREMENT_TITLE_RE =
   /^(?:\d+(?:\.\d+)?|\d+\/\d+|½|¼|¾|one|two|three|four|five|six)\s*(?:lb|lbs|pound|pounds|oz|ounces?|cups?|tbsp|tablespoons?|tsp|teaspoons?|cloves?|cans?|packages?|sticks?)\b/i;
@@ -307,6 +310,11 @@ function isBadTitleCandidate(value, accountName = "") {
   const containsInstructionPhrase =
     INSTRUCTION_VERB_RE.test(text) && INSTRUCTION_CONTEXT_RE.test(text);
 
+    const hasColonInstruction =
+  /:\s*(in|add|mix|stir|melt|cook|bake|heat|pour|spread|combine|whisk|place|arrange|toss|season|build)\b/i.test(
+    text
+  );
+
   const likelyAccountOnlyTitle =
     words.length <= 3 && !FOOD_TITLE_WORDS.test(text) && /kitchen|recipes?|food|macro/i.test(text);
 
@@ -322,7 +330,8 @@ const genericRecipeCategory = GENERIC_RECIPE_CATEGORY_RE.test(text);
   sectionOrMetaText ||
   promotionalNoise ||
   startsLikeInstruction ||
-  containsInstructionPhrase
+  containsInstructionPhrase ||
+  hasColonInstruction
 );
 }
 
