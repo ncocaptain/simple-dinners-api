@@ -7,16 +7,16 @@ const FOOD_TITLE_WORDS =
   /\b(chicken|beef|shrimp|prawn|prawns|crab|salmon|pork|steak|sausage|turkey|tofu|rice|bowl|bowls|pasta|noodle|noodles|ramen|salad|soup|curry|taco|tacos|potato|potatoes|veggie|veggies|vegetable|vegetables|mushroom|mushrooms|cauliflower|broccoli|zucchini|avocado|egg|eggs|bread|muffin|muffins|waffle|waffles|pancake|pancakes|lentil|lentils|chickpea|chickpeas|bean|beans|quinoa|oats|banana|smoothie|cookie|cookies|cake|pie|sauce|copycat|casserole|skillet|roasted|grilled|baked|fried|slow cooker|air fryer|garlic|butter|cheese|cheesy|stuffed|marinade|meatball|meatballs|chili|pizza|lasagna|cabbage|cups|wraps|sandwich|burgers?|dessert|brownies?)\b/i;
 
 const INSTRUCTION_START_RE =
-  /^(optional:?\s*)?(add|mix|stir|cook|bake|heat|pour|spread|roast|broil|serve|finish|combine|whisk|drizzle|garnish|assemble|marinate|marinade|preheat|place|arrange|layer|toss|slice|chop|season|top|remove|transfer|fold|cover|simmer|boil|grill|fry|build|melt|saut(?:e|é)|reserve|drain|nestle)\b/i;
+  /^(optional:?\s*)?(add|mix|stir|cook|bake|heat|pour|spread|roast|broil|serve|finish|combine|whisk|drizzle|garnish|assemble|marinate|marinade|preheat|place|arrange|layer|toss|slice|chop|season|top|remove|transfer|fold|cover|simmer|boil|grill|fry|build|melt|saut(?:e|é)|reserve|drain|nestle|spoon)\b/i;
 
 const INSTRUCTION_VERB_RE =
-  /\b(add|mix|stir|cook|bake|heat|pour|spread|roast|broil|serve|finish|combine|whisk|drizzle|garnish|assemble|marinate|marinade|preheat|place|arrange|layer|toss|season|top|cover|simmer|boil|grill|fry|build|melt|saut(?:e|é)|reserve|drain|nestle)\b/i;
+  /\b(add|mix|stir|cook|bake|heat|pour|spread|roast|broil|serve|finish|combine|whisk|drizzle|garnish|assemble|marinate|marinade|preheat|place|arrange|layer|toss|season|top|cover|simmer|boil|grill|fry|build|melt|saut(?:e|é)|reserve|drain|nestle|spoon)\b/i;
 
 const INSTRUCTION_CONTEXT_RE =
   /\b(minutes?|until|bowl|pan|pot|tray|dish|oven|coated|tender|fragrant|golden|caramelized|halfway|lemon|brightness|sauce|serve|served|seasoning|single layer|above|mixture|skillet|baking dish|air fryer|remaining butter|chowder base|onion|garlic|pasta water|lobster tails?)\b/i;
 
-const MEASUREMENT_TITLE_RE =
-  /^(?:\d+(?:\.\d+)?|\d+\/\d+|½|¼|¾|one|two|three|four|five|six)\s*(?:lb|lbs|pound|pounds|oz|ounces?|cups?|tbsp|tablespoons?|tsp|teaspoons?|cloves?|cans?|packages?|sticks?)\b/i;
+const INSTRUCTION_CONTEXT_RE =
+  /\b(minutes?|until|bowl|pan|pot|tray|dish|oven|coated|tender|fragrant|golden|caramelized|halfway|lemon|brightness|sauce|serve|served|seasoning|single layer|above|mixture|skillet|baking dish|air fryer|remaining butter|chowder base|onion|garlic|pasta water|lobster tails?|generously|reserved)\b/i;
 
 const GENERIC_RECIPE_CATEGORY_RE =
   /^(?:shrimp|chicken|beef|pork|salmon|fish|seafood|pasta|rice|taco|tacos|soup|salad|dessert|dinner|breakfast|lunch|air fryer|slow cooker|crockpot|keto|healthy|easy|quick|low carb|high protein)(?:\s+recipes?)?$/i;
