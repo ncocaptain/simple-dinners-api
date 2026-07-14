@@ -1170,9 +1170,16 @@ async function rescueSocialCaptionIfUseful(result) {
 
   const rescueText = buildCaptionRescueText(result);
 
-  if (!looksLikeRecipeCaption(rescueText)) {
-    return result;
-  }
+const userCaptionTextProvided =
+  result.debug?.userCaptionTextProvided === true;
+
+if (!userCaptionTextProvided && !looksLikeRecipeCaption(rescueText)) {
+  return result;
+}
+
+if (userCaptionTextProvided && rescueText.trim().length < 80) {
+  return result;
+}
 
   if (!openai) {
     console.log("Social caption rescue skipped: OPENAI_API_KEY is not set.");
