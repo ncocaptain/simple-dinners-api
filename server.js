@@ -1140,27 +1140,26 @@ function buildCaptionRescueText(result) {
   return socialCaptionParts.rescueText;
 }
 function looksLikeRecipeCaption(text) {
-  const value = String(text || "").toLowerCase();
+  const raw = String(text || "");
+  const value = raw.toLowerCase();
 
   if (value.length < 120) return false;
 
   const hasIngredientSignal =
-  /ingredients?(?:\s*\([^)]*\))?\s*[:~\-]/i.test(value) ||
-  value.includes("you need") ||
-  value.includes("what you need") ||
-  value.includes("what you’ll need") ||
-  value.includes("what you'll need");
+    /ingredients?(?:\s*\([^)]*\))?\s*[:~\-]/i.test(raw) ||
+    /what\s+you(?:'|’)?ll\s+need\s*[:~\-]?/i.test(raw) ||
+    /what\s+you\s+need\s*[:~\-]?/i.test(raw);
 
-const hasInstructionSignal =
-  /(instructions?|directions?|method|steps?|how to make)(?:\s*\([^)]*\))?\s*[:~\-]/i.test(
-    value
-  ) ||
-  /\b1\s*[-.)]/.test(value) ||
-  /1️⃣|2️⃣|3️⃣|4️⃣|5️⃣/.test(value);
+  const hasInstructionSignal =
+    /(instructions?|directions?|method|steps?|how\s+to\s+make)(?:\s*\([^)]*\))?\s*[:~\-]/i.test(
+      raw
+    ) ||
+    /\b1\s*[-.)]/.test(raw) ||
+    /1️⃣|2️⃣|3️⃣|4️⃣|5️⃣/.test(raw);
 
   const hasCookingWords =
-    /mix|stir|cook|bake|heat|add|combine|whisk|serve|marinate|drizzle|garnish|assemble/i.test(
-      text
+    /\b(mix|stir|cook|bake|heat|add|combine|whisk|serve|marinate|drizzle|garnish|assemble|season|simmer|boil|grill|fry|sauté|saute|toss)\b/i.test(
+      raw
     );
 
   return hasIngredientSignal && (hasInstructionSignal || hasCookingWords);
