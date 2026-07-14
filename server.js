@@ -1166,26 +1166,42 @@ function looksLikeRecipeCaption(text) {
 }
 
 async function rescueSocialCaptionIfUseful(result) {
-  if (!resultNeedsCaptionRescue(result)) return result;
+  const userCaptionTextProvided =
+    result.debug?.userCaptionTextProvided === true;
 
-  const rescueText = buildCaptionRescueText(result);
-
-const userCaptionTextProvided =
-  result.debug?.userCaptionTextProvided === true;
+  const needsRescue = resultNeedsCaptionRescue(result);
 
   result.debug = {
-  ...(result.debug || {}),
-  captionAssistRescueBypassActive: userCaptionTextProvided,
-  captionAssistRescueTextLength: rescueText.length,
-};
+    ...(result.debug || {}),
+    captionAssistRescueChecked: true,
+    captionAssistNeedsRescue: needsRescue,
+    captionAssistUserCaptionTextProvided: userCaptionTextProvided,
+  };
 
-if (!userCaptionTextProvided && !looksLikeRecipeCaption(rescueText)) {
-  return result;
-}
+  if (!needsRescue) {
+    result.debug.captionAssistExitReason = "result-does-not-need-rescue";
+    return result;
+  }
 
-if (userCaptionTextProvided && rescueText.trim().length < 80) {
-  return result;
-}
+  const rescueText = buildCaptionRescueText(result);
+  const looksLikeCaptionRecipe = looksLikeRecipeCaption(rescueText);
+
+  result.debug = {
+    ...(result.debug || {}),
+    captionAssistRescueBypassActive: userCaptionTextProvided,
+    captionAssistRescueTextLength: rescueText.length,
+    captionAssistLooksLikeRecipeCaption: looksLikeCaptionRecipe,
+  };
+
+  if (!userCaptionTextProvided && !looksLikeCaptionRecipe) {
+    result.debug.captionAssistExitReason = "scraped-caption-did-not-look-like-recipe";
+    return result;
+  }
+
+  if (userCaptionTextProvided && rescueText.trim().length < 80) {
+    result.debug.captionAssistExitReason = "pasted-caption-too-short";
+    return result;
+  }
 
   if (!openai) {
     console.log("Social caption rescue skipped: OPENAI_API_KEY is not set.");
@@ -1263,8 +1279,16 @@ if (userCaptionTextProvided && rescueText.trim().length < 80) {
         note: "Recipe details were organized from visible social caption text.",
       },
     };
-  } catch (error) {
+    } catch (error) {
     console.error("Social caption rescue failed:", error);
+
+    result.debug = {
+      ...(result.debug || {}),
+      captionAssistExitReason: "ai-rescue-error",
+      captionAssistRescueError:
+        error instanceof Error ? error.message : "Unknown caption rescue error",
+    };
+
     return result;
   }
 }
