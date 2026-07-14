@@ -1165,6 +1165,73 @@ function looksLikeRecipeCaption(text) {
   return hasIngredientSignal && (hasInstructionSignal || hasCookingWords);
 }
 
+function parseCaptionAssistTextWithoutAI(text) {
+  const lines = String(text || "")
+    .split(/\r?\n/)
+    .map((line) => cleanText(line))
+    .filter(Boolean);
+
+  if (lines.length === 0) {
+    return { name: "", ingredients: [], instructions: [] };
+  }
+
+  const ingredientHeaderIndex = lines.findIndex((line) =>
+    /^ingredients?(?:\s*\([^)]*\))?\s*[:~\-]?$/i.test(line)
+  );
+
+  const instructionHeaderIndex = lines.findIndex((line) =>
+    /^(instructions?|directions?|method|steps?|how\s+to\s+make)(?:\s*\([^)]*\))?\s*[:~\-]?$/i.test(
+      line
+    )
+  );
+
+  if (
+    ingredientHeaderIndex < 0 ||
+    instructionHeaderIndex < 0 ||
+    instructionHeaderIndex <= ingredientHeaderIndex
+  ) {
+    return { name: "", ingredients: [], instructions: [] };
+  }
+
+  const name =
+    lines
+      .slice(0, ingredientHeaderIndex)
+      .find((line) => line.length > 2 && !/^https?:\/\//i.test(line)) ||
+    "Imported Recipe";
+
+  const stopLine = /^(tips?|notes?|hashtags?|save|follow|like|comment|share)\s*[:~\-]?$/i;
+
+  const ingredients = lines
+    .slice(ingredientHeaderIndex + 1, instructionHeaderIndex)
+    .filter((line) => !stopLine.test(line))
+    .filter((line) => !/^#|^@/.test(line))
+    .filter(Boolean);
+
+  const rawInstructionLines = lines.slice(instructionHeaderIndex + 1);
+
+  const instructions = [];
+
+  for (const line of rawInstructionLines) {
+    if (stopLine.test(line)) break;
+    if (/^#|^@/.test(line)) break;
+
+    const cleaned = line
+      .replace(/^\d+\s*[\).:-]\s*/g, "")
+      .replace(/^[1-9]️⃣\s*/g, "")
+      .trim();
+
+    if (cleaned) {
+      instructions.push(cleaned);
+    }
+  }
+
+  return {
+    name,
+    ingredients,
+    instructions,
+  };
+}
+
 async function rescueSocialCaptionIfUseful(result) {
   const userCaptionTextProvided =
     result.debug?.userCaptionTextProvided === true;
@@ -1279,8 +1346,61 @@ async function rescueSocialCaptionIfUseful(result) {
         note: "Recipe details were organized from visible social caption text.",
       },
     };
-    } catch (error) {
+      } catch (error) {
     console.error("Social caption rescue failed:", error);
+
+    const fallbackParsed = parseCaptionAssistTextWithoutAI(rescueText);
+
+    if (
+      userCaptionTextProvided &&
+      fallbackParsed.ingredients.length > 0 &&
+      fallbackParsed.instructions.length > 0
+    ) {
+      const fallbackName = cleanSocialRecipeTitle(
+        fallbackParsed.name || result.name || "Saved Recipe",
+        rescueText,
+        result.sourceUrl || result.importedFromUrl || result.recipe?.sourceUrl || ""
+      );
+
+      const fallbackRecipe = {
+        name: fallbackName,
+        ingredients: fallbackParsed.ingredients.join("\n"),
+        instructions: fallbackParsed.instructions.join("\n"),
+        photoUrl: result.image || result.recipe?.photoUrl || "",
+        slug: `${slugify(fallbackName)}-${Date.now().toString().slice(-4)}`,
+        sourceUrl:
+          result.recipe?.sourceUrl || result.importedFromUrl || result.sourceUrl || "",
+        effort: "normal",
+        importStatus: "full",
+        fallbackText: "",
+      };
+
+      return {
+        ...result,
+        success: true,
+        successLevel: "full",
+        debugVersion: "simple-dinners-api-caption-assist-fallback-v1",
+        name: fallbackName,
+        ingredients: fallbackParsed.ingredients,
+        instructions: fallbackParsed.instructions,
+        recipe: fallbackRecipe,
+        debug: {
+          ...(result.debug || {}),
+          socialCaptionRescue: true,
+          captionAssistFallbackParserUsed: true,
+          captionAssistExitReason: "ai-rescue-error-fallback-parser-used",
+          captionAssistRescueError:
+            error instanceof Error ? error.message : "Unknown caption rescue error",
+          ingredientsCount: fallbackParsed.ingredients.length,
+          instructionsCount: fallbackParsed.instructions.length,
+        },
+        aiRescue: {
+          enabled: false,
+          type: "caption-assist-fallback",
+          note: "Recipe details were organized from pasted caption text without AI.",
+        },
+      };
+    }
 
     result.debug = {
       ...(result.debug || {}),
