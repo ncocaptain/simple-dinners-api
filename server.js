@@ -1173,6 +1173,12 @@ async function rescueSocialCaptionIfUseful(result) {
 const userCaptionTextProvided =
   result.debug?.userCaptionTextProvided === true;
 
+  result.debug = {
+  ...(result.debug || {}),
+  captionAssistRescueBypassActive: userCaptionTextProvided,
+  captionAssistRescueTextLength: rescueText.length,
+};
+
 if (!userCaptionTextProvided && !looksLikeRecipeCaption(rescueText)) {
   return result;
 }
