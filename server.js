@@ -35,8 +35,8 @@ const openaiApiKey = process.env.OPENAI_API_KEY;
 
 const openai = openaiApiKey
   ? new OpenAI({
-      apiKey: openaiApiKey,
-    })
+    apiKey: openaiApiKey,
+  })
   : null;
 
 if (!openaiApiKey) {
@@ -87,12 +87,12 @@ app.post("/resolve-pinterest", async (request, reply) => {
 app.post("/import-recipe", async (request, reply) => {
   const { url, captionText, sharedText } = request.body || {};
 
-const userCaptionText =
-  typeof captionText === "string" && captionText.trim()
-    ? captionText.trim()
-    : typeof sharedText === "string" && sharedText.trim()
-    ? sharedText.trim()
-    : "";
+  const userCaptionText =
+    typeof captionText === "string" && captionText.trim()
+      ? captionText.trim()
+      : typeof sharedText === "string" && sharedText.trim()
+        ? sharedText.trim()
+        : "";
 
   if (!url) {
     return reply.code(400).send({ error: "URL required" });
@@ -255,8 +255,8 @@ const userCaptionText =
     });
 
     firstResult = attachUserCaptionTextToResult(firstResult, userCaptionText);
-firstResult = await rescueSocialCaptionIfUseful(firstResult);
-firstResult = cleanSocialFallbackTitleIfNeeded(firstResult);
+    firstResult = await rescueSocialCaptionIfUseful(firstResult);
+    firstResult = cleanSocialFallbackTitleIfNeeded(firstResult);
 
     console.log("Recipe result after caption rescue check:", {
       successLevel: firstResult?.successLevel,
@@ -310,9 +310,9 @@ firstResult = cleanSocialFallbackTitleIfNeeded(firstResult);
         importedFromUrl: firstResult.linkedRecipeUrl,
         recipe: linkedResult?.recipe
           ? {
-              ...linkedResult.recipe,
-              sourceUrl: firstResult.linkedRecipeUrl,
-            }
+            ...linkedResult.recipe,
+            sourceUrl: firstResult.linkedRecipeUrl,
+          }
           : null,
         debug: {
           ...(linkedResult?.debug || {}),
@@ -488,24 +488,24 @@ async function fetchAndExtractRecipe(url) {
   }
 
   const html = await response.text();
-const finalUrl = response.url || url;
+  const finalUrl = response.url || url;
 
-const jsonLdBlocks = extractJsonLdBlocksFromHtml(html);
+  const jsonLdBlocks = extractJsonLdBlocksFromHtml(html);
 
-for (const block of jsonLdBlocks) {
-  const jsonLdResult = extractRecipeFromJsonLd(block, finalUrl);
+  for (const block of jsonLdBlocks) {
+    const jsonLdResult = extractRecipeFromJsonLd(block, finalUrl);
 
-  if (
-    jsonLdResult?.success &&
-    jsonLdResult.successLevel !== "metadata-only"
-  ) {
-    return jsonLdResult;
+    if (
+      jsonLdResult?.success &&
+      jsonLdResult.successLevel !== "metadata-only"
+    ) {
+      return jsonLdResult;
+    }
   }
-}
 
-const $ = cheerio.load(html);
+  const $ = cheerio.load(html);
 
-return extractRecipeFromPage($, url, finalUrl);
+  return extractRecipeFromPage($, url, finalUrl);
 }
 
 function shouldUseFastImportResult(result) {
@@ -756,9 +756,9 @@ function extractRecipeFromJsonLd(jsonLdText, sourceUrl) {
 
   const ingredients = Array.isArray(recipe?.recipeIngredient)
     ? recipe.recipeIngredient
-        .map(cleanHtmlEntities)
-        .map(cleanText)
-        .filter(Boolean)
+      .map(cleanHtmlEntities)
+      .map(cleanText)
+      .filter(Boolean)
     : [];
 
   const instructions = extractInstructions(recipe?.recipeInstructions)
@@ -775,8 +775,8 @@ function extractRecipeFromJsonLd(jsonLdText, sourceUrl) {
     hasIngredients && hasInstructions
       ? "full"
       : hasIngredients || hasInstructions
-      ? "partial"
-      : "metadata-only";
+        ? "partial"
+        : "metadata-only";
 
   return {
     success: true,
@@ -935,9 +935,9 @@ function extractRecipeFromPage($, sourceUrl, finalUrl) {
   const description = cleanHtmlEntities(
     cleanText(
       $("meta[property='og:description']").attr("content") ||
-        $("meta[name='description']").attr("content") ||
-        $("meta[name='twitter:description']").attr("content") ||
-        ""
+      $("meta[name='description']").attr("content") ||
+      $("meta[name='twitter:description']").attr("content") ||
+      ""
     )
   );
 
@@ -945,10 +945,10 @@ function extractRecipeFromPage($, sourceUrl, finalUrl) {
   const originalRecipeName = recipeName;
   const socialCaptionParts = isSocialSource
     ? resolveSocialCaptionParts({
-        rawName: originalRecipeName,
-        description,
-        sourceUrl: finalUrl,
-      })
+      rawName: originalRecipeName,
+      description,
+      sourceUrl: finalUrl,
+    })
     : null;
 
   const linkedRecipeUrl = finalUrl.includes("allrecipes.com")
@@ -962,10 +962,10 @@ function extractRecipeFromPage($, sourceUrl, finalUrl) {
     hasIngredients && hasInstructions
       ? "full"
       : hasIngredients || hasInstructions
-      ? "partial"
-      : isSocialSource
-      ? "social-metadata-only"
-      : "metadata-only";
+        ? "partial"
+        : isSocialSource
+          ? "social-metadata-only"
+          : "metadata-only";
 
   return {
     success: true,
@@ -1004,12 +1004,12 @@ function extractRecipeFromPage($, sourceUrl, finalUrl) {
       originalRecipeName: isSocialSource ? originalRecipeName : undefined,
       socialCaptionParts: socialCaptionParts
         ? {
-            platform: socialCaptionParts.platform,
-            accountName: socialCaptionParts.accountName,
-            rawCaption: socialCaptionParts.rawCaption,
-            titleCandidate: socialCaptionParts.titleCandidate,
-            fallbackTitle: socialCaptionParts.fallbackTitle,
-          }
+          platform: socialCaptionParts.platform,
+          accountName: socialCaptionParts.accountName,
+          rawCaption: socialCaptionParts.rawCaption,
+          titleCandidate: socialCaptionParts.titleCandidate,
+          fallbackTitle: socialCaptionParts.fallbackTitle,
+        }
         : undefined,
     },
   };
@@ -1166,8 +1166,13 @@ function looksLikeRecipeCaption(text) {
 }
 
 function parseCaptionAssistTextWithoutAI(text) {
-  const lines = String(text || "")
-    .split(/\r?\n/)
+  const normalizedText = String(text || "")
+    .replace(/\r/g, "\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+
+  const lines = normalizedText
+    .split(/\n/)
     .map((line) => cleanText(line))
     .filter(Boolean);
 
@@ -1199,7 +1204,8 @@ function parseCaptionAssistTextWithoutAI(text) {
       .find((line) => line.length > 2 && !/^https?:\/\//i.test(line)) ||
     "Imported Recipe";
 
-  const stopLine = /^(tips?|notes?|hashtags?|save|follow|like|comment|share)\s*[:~\-]?$/i;
+  const stopLine =
+    /^(tips?|notes?|hashtags?|save|follow|like|comment|share|for\s+more)\s*[:~\-]?$/i;
 
   const ingredients = lines
     .slice(ingredientHeaderIndex + 1, instructionHeaderIndex)
@@ -1208,7 +1214,6 @@ function parseCaptionAssistTextWithoutAI(text) {
     .filter(Boolean);
 
   const rawInstructionLines = lines.slice(instructionHeaderIndex + 1);
-
   const instructions = [];
 
   for (const line of rawInstructionLines) {
@@ -1346,7 +1351,7 @@ async function rescueSocialCaptionIfUseful(result) {
         note: "Recipe details were organized from visible social caption text.",
       },
     };
-      } catch (error) {
+  } catch (error) {
     console.error("Social caption rescue failed:", error);
 
     const fallbackParsed = parseCaptionAssistTextWithoutAI(rescueText);
@@ -1507,14 +1512,14 @@ async function applyAiCleanupToResult(result) {
   if (!hasIngredients && !hasInstructions) return result;
 
   const ingredientCount = result.recipe.ingredients
-  .split("\n")
-  .map((line) => line.trim())
-  .filter(Boolean).length;
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean).length;
 
-const instructionCount = result.recipe.instructions
-  .split("\n")
-  .map((line) => line.trim())
-  .filter(Boolean).length;
+  const instructionCount = result.recipe.instructions
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean).length;
 
   const instructionsAlreadyUseful = instructionsMentionEnoughIngredients(
     result.recipe.ingredients,
@@ -1705,20 +1710,20 @@ function isBlockedPage($, finalUrl = "") {
   const body = cleanText($("body").text()).toLowerCase();
 
   return (
-  title.includes("just a moment") ||
-  title.includes("access denied") ||
-  title.includes("access to this page has been denied") ||
-  body.includes("just a moment") ||
-  body.includes("checking your browser") ||
-  body.includes("access to this page has been denied") ||
-  body.includes("please enable cookies") ||
-  body.includes("verify you are human") ||
-  body.includes("attention required") ||
-  finalUrl.includes("js_challenge=1") ||
-  finalUrl.includes("solution=") ||
-  body.includes("blocked by network security") ||
-  body.includes("whoa there, pardner")
-);
+    title.includes("just a moment") ||
+    title.includes("access denied") ||
+    title.includes("access to this page has been denied") ||
+    body.includes("just a moment") ||
+    body.includes("checking your browser") ||
+    body.includes("access to this page has been denied") ||
+    body.includes("please enable cookies") ||
+    body.includes("verify you are human") ||
+    body.includes("attention required") ||
+    finalUrl.includes("js_challenge=1") ||
+    finalUrl.includes("solution=") ||
+    body.includes("blocked by network security") ||
+    body.includes("whoa there, pardner")
+  );
 }
 
 // =====================================================
@@ -1794,14 +1799,14 @@ function extractInstructions(input) {
   }
 
   if (typeof input === "object") {
-  if (input.itemListElement) {
-    const nested = extractInstructions(input.itemListElement);
-    if (nested.length > 0) return nested;
-  }
+    if (input.itemListElement) {
+      const nested = extractInstructions(input.itemListElement);
+      if (nested.length > 0) return nested;
+    }
 
-  if (input.text) return extractInstructions(input.text);
-  if (input.name) return extractInstructions(input.name);
-}
+    if (input.text) return extractInstructions(input.text);
+    if (input.name) return extractInstructions(input.name);
+  }
 
   return [];
 }
@@ -1955,17 +1960,17 @@ function cleanHtmlEntities(value) {
     .replace(/&frac14;/gi, "¼")
     .replace(/&frac34;/gi, "¾")
     .replace(/&#160;/g, " ")
-.replace(/&#176;/g, "°")
-.replace(/&#188;/g, "¼")
-.replace(/&#189;/g, "½")
-.replace(/&#190;/g, "¾")
-.replace(/&#8217;/g, "'")
-.replace(/&#8216;/g, "'")
-.replace(/&#8220;/g, '"')
-.replace(/&#8221;/g, '"')
-.replace(/&#(\d+);/g, (_, code) => {
-  return String.fromCharCode(Number(code));
-})
+    .replace(/&#176;/g, "°")
+    .replace(/&#188;/g, "¼")
+    .replace(/&#189;/g, "½")
+    .replace(/&#190;/g, "¾")
+    .replace(/&#8217;/g, "'")
+    .replace(/&#8216;/g, "'")
+    .replace(/&#8220;/g, '"')
+    .replace(/&#8221;/g, '"')
+    .replace(/&#(\d+);/g, (_, code) => {
+      return String.fromCharCode(Number(code));
+    })
     .trim();
 }
 
@@ -2100,7 +2105,7 @@ function normalizeCookingText(text) {
     .replace(/(\d+)\s*degree\b/gi, "$1°F")
     .replace(/\s+/g, " ")
     .replace(/\(Discard the bones\.\)\s*Return it to the soup\./gi,
-  "Discard the bones, then return the shredded chicken to the soup.")
+      "Discard the bones, then return the shredded chicken to the soup.")
     .trim();
 }
 
@@ -2225,15 +2230,15 @@ function removeSecondaryMeasurements(text) {
 async function cleanRecipeWithAI(recipe) {
   try {
     if (!process.env.OPENAI_API_KEY) {
-  return {
-    ingredients: recipe.ingredients.split("\n"),
-    instructions: recipe.instructions.split("\n"),
-    effort: recipe.effort || "normal",
-    tags: Array.isArray(recipe.tags) ? recipe.tags : [],
-    isVegetarian: recipe.isVegetarian === true,
-    notes: recipe.notes || "",
-  };
-}
+      return {
+        ingredients: recipe.ingredients.split("\n"),
+        instructions: recipe.instructions.split("\n"),
+        effort: recipe.effort || "normal",
+        tags: Array.isArray(recipe.tags) ? recipe.tags : [],
+        isVegetarian: recipe.isVegetarian === true,
+        notes: recipe.notes || "",
+      };
+    }
 
     const prompt = `
 You are cleaning and standardizing a recipe for Simple Dinners, a meal planning and Cook Mode app.
@@ -2391,8 +2396,8 @@ ${recipe.instructions}
       tags: Array.isArray(cleaned.tags)
         ? cleaned.tags
         : Array.isArray(recipe.tags)
-        ? recipe.tags
-        : [],
+          ? recipe.tags
+          : [],
 
       isVegetarian:
         typeof cleaned.isVegetarian === "boolean"
