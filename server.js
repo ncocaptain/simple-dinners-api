@@ -2,8 +2,8 @@
 // Simple Dinners API
 // Backend importer using Fastify + Playwright + Cheerio
 // =====================================================
-
 import Fastify from "fastify";
+import multipart from "@fastify/multipart";
 import { chromium } from "playwright";
 import * as cheerio from "cheerio";
 import OpenAI from "openai";
@@ -21,6 +21,13 @@ import {
 // =====================================================
 
 const app = Fastify({ logger: true });
+await app.register(multipart, {
+  limits: {
+    files: 5,
+    fileSize: 8 * 1024 * 1024,
+    parts: 10,
+  },
+});
 app.addHook("onRequest", async (request, reply) => {
   reply.header("Access-Control-Allow-Origin", "*");
   reply.header("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
@@ -46,6 +53,14 @@ if (!openaiApiKey) {
 }
 
 const SOURCE_STEPS_PLACEHOLDER = "Steps available at source link!";
+
+const SCREENSHOT_MIME_TYPES = new Set([
+  "image/jpeg",
+  "image/png",
+  "image/webp",
+]);
+
+const MAX_SCREENSHOT_TOTAL_BYTES = 25 * 1024 * 1024;
 
 app.get("/", async () => {
   return {
@@ -378,6 +393,315 @@ app.post("/import-jsonld", async (request, reply) => {
       success: false,
       successLevel: "error",
       error: error instanceof Error ? error.message : "JSON-LD import failed",
+    });
+  }
+});
+
+// =====================================================
+// POST /import-screenshots
+// Receive and validate screenshot uploads.
+// AI vision processing will be added after upload plumbing is verified.
+// =====================================================
+
+app.post("/import-screenshots", async (request, reply) => {
+  if (!request.isMultipart()) {
+    return reply.code(415).send({
+      success: false,
+      successLevel: "invalid-content-type",
+      error: "Screenshot uploads must use multipart/form-data.",
+    });
+  }
+
+  const screenshots = [];
+  const fields = {};
+  let rejectedFile = null;
+
+  try {
+    for await (const part of request.parts()) {
+      if (part.type === "file") {
+        const isScreenshotField =
+          part.fieldname === "screenshot" ||
+          part.fieldname === "screenshots";
+
+        if (!isScreenshotField) {
+          part.file.resume();
+          continue;
+        }
+
+        if (!SCREENSHOT_MIME_TYPES.has(part.mimetype)) {
+          rejectedFile = {
+            filename: part.filename || "image",
+            mimetype: part.mimetype || "unknown",
+          };
+
+          part.file.resume();
+          continue;
+        }
+
+        const buffer = await part.toBuffer();
+
+        if (buffer.length === 0) {
+          continue;
+        }
+
+        screenshots.push({
+          filename:
+            part.filename || `screenshot-${screenshots.length + 1}`,
+          mimetype: part.mimetype,
+          size: buffer.length,
+          buffer,
+        });
+
+        continue;
+      }
+
+      fields[part.fieldname] = String(part.value ?? "").trim();
+    }
+
+    if (rejectedFile) {
+      return reply.code(415).send({
+        success: false,
+        successLevel: "unsupported-image-type",
+        error: "Please upload JPEG, PNG, or WebP screenshots.",
+        rejectedFile,
+      });
+    }
+
+    if (screenshots.length === 0) {
+      return reply.code(400).send({
+        success: false,
+        successLevel: "no-screenshots",
+        error: "Please choose at least one screenshot.",
+      });
+    }
+
+    const totalBytes = screenshots.reduce(
+      (total, screenshot) => total + screenshot.size,
+      0
+    );
+
+    if (totalBytes > MAX_SCREENSHOT_TOTAL_BYTES) {
+      return reply.code(413).send({
+        success: false,
+        successLevel: "screenshots-too-large",
+        error: "The selected screenshots are too large. Please use fewer or smaller images.",
+        totalBytes,
+        maximumBytes: MAX_SCREENSHOT_TOTAL_BYTES,
+      });
+    }
+
+    console.log("Screenshot upload received:", {
+      screenshotCount: screenshots.length,
+      totalBytes,
+      sourceUrl: fields.sourceUrl || "",
+      language: fields.language || "en",
+    });
+
+    const visionResult = await extractRecipeTextFromScreenshots(screenshots, {
+      sourceUrl: fields.sourceUrl || "",
+      sourceTitle: fields.sourceTitle || "",
+      language: fields.language || "en",
+    });
+
+    if (!visionResult.hasRecipeContent || !visionResult.extractedText) {
+      return reply.code(422).send({
+        success: false,
+        successLevel: "no-recipe-found",
+        debugVersion: "simple-dinners-api-screenshot-vision-v1",
+        importMethod: "ai-screenshot",
+        aiAssisted: true,
+        premiumFeatureKey: "ai_screenshot_import",
+        premiumEnforced: false,
+        sourceUrl: fields.sourceUrl || "",
+        sourceTitle: fields.sourceTitle || "",
+        language: fields.language || "en",
+        screenshotCount: screenshots.length,
+        totalBytes,
+        extractedTitle: visionResult.title,
+        extractedServings: visionResult.servings,
+        extractedText: visionResult.extractedText,
+        possibleMissingBeginning: visionResult.possibleMissingBeginning,
+        possibleMissingEnding: visionResult.possibleMissingEnding,
+        warnings: visionResult.warnings,
+        error: "We could not find enough visible recipe content in those screenshots.",
+      });
+    }
+
+    const parsed = await parseRecipeTextWithAI(visionResult.extractedText);
+
+    const parsedIngredients = Array.isArray(parsed.ingredients)
+      ? parsed.ingredients
+        .map(cleanHtmlEntities)
+        .map(cleanText)
+        .filter(Boolean)
+      : [];
+
+    const parsedInstructions = Array.isArray(parsed.instructions)
+      ? parsed.instructions
+        .map(cleanHtmlEntities)
+        .map(cleanText)
+        .filter(Boolean)
+      : [];
+
+    const genericParsedTitles = new Set([
+      "",
+      "imported recipe",
+      "saved recipe",
+      "screenshot recipe",
+      "recipe",
+    ]);
+
+    const parsedTitle = cleanText(parsed.name || "");
+
+    let recipeName = cleanText(
+      visionResult.title ||
+      fields.sourceTitle ||
+      (!genericParsedTitles.has(parsedTitle.toLowerCase())
+        ? parsedTitle
+        : "") ||
+      "Screenshot Recipe"
+    );
+
+    const titleSource = visionResult.title
+      ? "visible-in-screenshot"
+      : fields.sourceTitle
+        ? "source-metadata"
+        : !genericParsedTitles.has(parsedTitle.toLowerCase())
+          ? "ai-inferred-from-visible-text"
+          : "fallback";
+
+    const hasIngredients = parsedIngredients.length > 0;
+    const hasInstructions = parsedInstructions.length > 0;
+
+    const coreRecipeAppearsComplete =
+      visionResult.ingredientsAppearComplete &&
+      visionResult.instructionsAppearComplete;
+
+    const screenshotAppearsIncomplete =
+      visionResult.possibleMissingBeginning ||
+      visionResult.possibleMissingEnding;
+
+    const successLevel =
+      hasIngredients && hasInstructions && coreRecipeAppearsComplete
+        ? "full"
+        : hasIngredients || hasInstructions
+          ? "partial"
+          : "metadata-only";
+
+    const sourceUrl = fields.sourceUrl || "";
+
+    const roughRecipe = {
+      name: recipeName,
+      ingredients: parsedIngredients.join("\n"),
+      instructions: hasInstructions
+        ? parsedInstructions.join("\n")
+        : SOURCE_STEPS_PLACEHOLDER,
+      servings: visionResult.servings || "",
+      photoUrl: "",
+      slug: `${slugify(recipeName)}-${Date.now().toString().slice(-4)}`,
+      sourceUrl,
+      effort: "normal",
+      importStatus: successLevel,
+      fallbackText:
+        successLevel === "full" ? "" : visionResult.extractedText,
+    };
+
+    const result = {
+      success: true,
+      successLevel,
+      debugVersion: "simple-dinners-api-screenshot-import-v1",
+
+      sourceUrl,
+      importedFromUrl: sourceUrl,
+
+      name: recipeName,
+      ingredients: parsedIngredients,
+      instructions: parsedInstructions,
+      servings: visionResult.servings || "",
+      image: "",
+      linkedRecipeUrl: "",
+
+      recipe: roughRecipe,
+
+      importMethod: "ai-screenshot",
+      aiAssisted: true,
+      needsReview: true,
+      canSaveNeedsFinishing: successLevel !== "full",
+
+      premiumFeatureKey: "ai_screenshot_import",
+      premiumEnforced: false,
+
+      screenshotImport: {
+        screenshotCount: screenshots.length,
+        totalBytes,
+        titleSource,
+        visibleTitle: visionResult.title,
+        visibleServings: visionResult.servings,
+        possibleMissingBeginning: visionResult.possibleMissingBeginning,
+        possibleMissingEnding: visionResult.possibleMissingEnding,
+        warnings: visionResult.warnings,
+        ingredientsAppearComplete:
+          visionResult.ingredientsAppearComplete,
+
+        instructionsAppearComplete:
+          visionResult.instructionsAppearComplete,
+
+        coreRecipeAppearsComplete,
+      },
+
+      aiInference: {
+        titleWasInferred: titleSource === "ai-inferred-from-visible-text",
+        recipeContentOrganizedByAI: true,
+        missingContentCompletedByAI: false,
+        note:
+          "Ingredients and instructions were organized from text visible in the screenshots. Missing recipe content was not intentionally completed.",
+      },
+
+      extractedText: visionResult.extractedText,
+
+      debug: {
+        screenshotImport: true,
+        screenshotCount: screenshots.length,
+        totalBytes,
+        titleSource,
+        parserIngredientsCount: parsedIngredients.length,
+        parserInstructionsCount: parsedInstructions.length,
+        screenshotAppearsIncomplete,
+        coreRecipeAppearsComplete,
+      },
+    };
+
+    console.log("Screenshot recipe parsing finished:", {
+      successLevel,
+      name: recipeName,
+      titleSource,
+      ingredientsCount: parsedIngredients.length,
+      instructionsCount: parsedInstructions.length,
+      screenshotAppearsIncomplete,
+    });
+
+    return reply.send(result);
+  } catch (error) {
+    request.log.error(error);
+
+    const statusCode = Number(error?.statusCode) || 500;
+    const errorCode = String(error?.code || "");
+
+    const uploadLimitReached =
+      statusCode === 413 ||
+      errorCode.includes("LIMIT") ||
+      errorCode.includes("TOO_LARGE");
+
+    return reply.code(uploadLimitReached ? 413 : 500).send({
+      success: false,
+      successLevel: uploadLimitReached
+        ? "upload-limit-reached"
+        : "upload-error",
+      error: uploadLimitReached
+        ? "Too many screenshots or one of the files is too large."
+        : error instanceof Error
+          ? error.message
+          : "Screenshot upload failed.",
     });
   }
 });
@@ -1934,6 +2258,141 @@ function extractNatashaInstructions($) {
   });
 
   return results.filter((line) => line.length > 10).slice(0, 40);
+}
+
+// =====================================================
+// Screenshot AI vision helpers
+// Extract visible recipe text from uploaded screenshots
+// =====================================================
+
+function imageBufferToDataUrl(buffer, mimetype) {
+  return `data:${mimetype};base64,${buffer.toString("base64")}`;
+}
+
+async function extractRecipeTextFromScreenshots(
+  screenshots,
+  {
+    sourceUrl = "",
+    sourceTitle = "",
+    language = "en",
+  } = {}
+) {
+  if (!openai) {
+    throw new Error("OPENAI_API_KEY is not set.");
+  }
+
+  if (!Array.isArray(screenshots) || screenshots.length === 0) {
+    throw new Error("At least one screenshot is required.");
+  }
+
+  const content = [
+    {
+      type: "text",
+      text: `
+You are helping Simple Dinners extract recipe text from screenshots.
+
+The screenshots may come from:
+- social media recipe posts
+- recipe websites
+- recipe apps
+- notes
+- messages
+- printed recipe photos
+
+Your job:
+Faithfully extract the visible recipe-related text.
+
+PRIORITIES:
+1. Capture the recipe title if visible.
+2. Capture ingredients exactly as shown when possible.
+3. Capture instructions exactly as shown when possible.
+4. Capture servings/yield if visible.
+5. Merge overlapping screenshots without duplicating repeated lines.
+
+STRICT RULES:
+- Do NOT invent missing ingredients.
+- Do NOT invent missing instructions.
+- Do NOT complete cut-off lines.
+- Do NOT rewrite the recipe into a nicer format.
+- Do NOT include social media UI text, comments, likes, timestamps, usernames, buttons, or unrelated promotional text unless it is clearly part of the recipe.
+- If the screenshots appear incomplete, say so in the warnings.
+- If no recipe is visible, say so.
+
+Return valid JSON only in this format:
+{
+  "hasRecipeContent": true,
+  "title": "Recipe title if visible",
+  "servings": "Servings if visible, otherwise empty string",
+  "extractedText": "All visible recipe text in a clean readable block",
+  "ingredientsAppearComplete": true,
+  "instructionsAppearComplete": true,
+  "possibleMissingBeginning": false,
+  "possibleMissingEnding": false,
+  "warnings": ["optional warning"]
+}
+
+COMPLETENESS RULES:
+- ingredientsAppearComplete means the visible ingredient list appears to include all recipe ingredients.
+- instructionsAppearComplete means the visible cooking method appears to reach the end of the recipe.
+- A missing recipe title does NOT make ingredients or instructions incomplete.
+- Missing servings do NOT make ingredients or instructions incomplete.
+- Optional notes, storage tips, substitutions, nutrition, or serving commentary continuing below the screenshots do NOT make the core recipe incomplete.
+- Set ingredientsAppearComplete or instructionsAppearComplete to false only when that specific recipe section appears visibly cut off or missing.
+
+Helpful context:
+- sourceTitle: ${sourceTitle || ""}
+- sourceUrl: ${sourceUrl || ""}
+- language: ${language || "en"}
+      `.trim(),
+    },
+  ];
+
+  for (const screenshot of screenshots) {
+    content.push({
+      type: "image_url",
+      image_url: {
+        url: imageBufferToDataUrl(screenshot.buffer, screenshot.mimetype),
+      },
+    });
+  }
+
+  const response = await openai.chat.completions.create({
+    model:
+      process.env.OPENAI_VISION_MODEL ||
+      process.env.OPENAI_MODEL ||
+      "gpt-5.5",
+    messages: [
+      {
+        role: "system",
+        content:
+          "You faithfully transcribe recipe content from screenshots for Simple Dinners. Return valid JSON only.",
+      },
+      {
+        role: "user",
+        content,
+      },
+    ],
+  });
+
+  const raw = response.choices?.[0]?.message?.content || "";
+  const parsed = JSON.parse(raw);
+
+  return {
+    hasRecipeContent: parsed?.hasRecipeContent === true,
+    title: String(parsed?.title || "").trim(),
+    servings: String(parsed?.servings || "").trim(),
+    extractedText: String(parsed?.extractedText || "").trim(),
+    ingredientsAppearComplete:
+      parsed?.ingredientsAppearComplete === true,
+
+    instructionsAppearComplete:
+      parsed?.instructionsAppearComplete === true,
+    possibleMissingBeginning: parsed?.possibleMissingBeginning === true,
+    possibleMissingEnding: parsed?.possibleMissingEnding === true,
+    warnings: Array.isArray(parsed?.warnings)
+      ? parsed.warnings.map((item) => String(item).trim()).filter(Boolean)
+      : [],
+  };
 }
 
 // =====================================================
