@@ -71,6 +71,79 @@ app.get("/", async () => {
 });
 
 // =====================================================
+// POST /interpret-smart-week-request
+// Convert an optional natural-language request into
+// validated planning guidance. This endpoint does not
+// select recipes or create the weekly plan.
+// =====================================================
+
+app.post("/interpret-smart-week-request", async (request, reply) => {
+  const requestText = String(
+    request.body?.requestText || "",
+  ).trim();
+
+  const language =
+    request.body?.language === "es"
+      ? "es"
+      : "en";
+
+  if (!requestText) {
+    return reply.code(400).send({
+      success: false,
+      error: "Smart Week request text is required.",
+    });
+  }
+
+  if (requestText.length > 500) {
+    return reply.code(400).send({
+      success: false,
+      error:
+        "Smart Week requests must be 500 characters or fewer.",
+    });
+  }
+
+  if (!openai) {
+    return reply.code(503).send({
+      success: false,
+      successLevel: "ai-unavailable",
+      error:
+        "Smart Week request interpretation is temporarily unavailable.",
+    });
+  }
+
+  try {
+    const constraints =
+      await interpretSmartWeekRequestWithAI(
+        requestText,
+        language,
+      );
+
+    return reply.send({
+      success: true,
+      debugVersion:
+        "simple-dinners-api-smart-week-request-v1",
+      aiAssisted: true,
+      premiumFeatureKey: "smart_week",
+      premiumEnforced: false,
+      requestText,
+      language,
+      constraints,
+    });
+  } catch (error) {
+    request.log.error(error);
+
+    return reply.code(500).send({
+      success: false,
+      successLevel: "interpretation-error",
+      error:
+        error instanceof Error
+          ? error.message
+          : "Smart Week request interpretation failed.",
+    });
+  }
+});
+
+// =====================================================
 // POST /resolve-pinterest
 // Resolve a Pinterest pin to the original recipe website
 // =====================================================
@@ -2393,6 +2466,295 @@ Helpful context:
       ? parsed.warnings.map((item) => String(item).trim()).filter(Boolean)
       : [],
   };
+}
+
+// =====================================================
+// Smart Week request interpretation
+// AI translates the user's optional sentence into a
+// small validated constraint object. Recipe selection
+// remains deterministic in the frontend planner.
+// =====================================================
+
+const SMART_WEEK_ALLOWED_TAGS = new Set([
+  "chicken",
+  "beef",
+  "pork",
+  "seafood",
+  "fish",
+  "pasta",
+  "rice",
+  "tacos",
+  "soup",
+  "salad",
+  "casserole",
+  "comfort",
+  "family",
+  "kid-friendly",
+  "quick",
+  "easy",
+  "oven",
+  "stovetop",
+  "slow-cooker",
+  "crockpot",
+  "air-fryer",
+  "grilling",
+  "sheet-pan",
+  "one-pot",
+  "vegetarian",
+  "healthy",
+  "spicy",
+  "italian",
+  "mexican",
+  "asian",
+  "freezer-friendly",
+  "gluten-free",
+  "low-carb",
+]);
+
+function stripJsonCodeFence(value) {
+  return String(value || "")
+    .trim()
+    .replace(/^```json\s*/i, "")
+    .replace(/^```\s*/i, "")
+    .replace(/\s*```$/i, "")
+    .trim();
+}
+
+function normalizeSmartWeekStringList(
+  value,
+  maximumItems = 12,
+) {
+  if (!Array.isArray(value)) return [];
+
+  return Array.from(
+    new Set(
+      value
+        .map((item) =>
+          String(item || "")
+            .trim()
+            .toLowerCase(),
+        )
+        .filter(Boolean)
+        .map((item) => item.slice(0, 50)),
+    ),
+  ).slice(0, maximumItems);
+}
+
+function normalizeSmartWeekTags(value) {
+  return normalizeSmartWeekStringList(value)
+    .map((tag) =>
+      tag.replace(/\s+/g, "-"),
+    )
+    .filter((tag) =>
+      SMART_WEEK_ALLOWED_TAGS.has(tag),
+    );
+}
+
+function normalizeSmartWeekProteinTargets(value) {
+  if (!Array.isArray(value)) return [];
+
+  const targets = [];
+
+  for (const item of value) {
+    const keyword = String(
+      item?.keyword || "",
+    )
+      .trim()
+      .toLowerCase()
+      .slice(0, 40);
+
+    const rawCount = Number(item?.count);
+    const count = Number.isFinite(rawCount)
+      ? Math.max(
+        1,
+        Math.min(7, Math.round(rawCount)),
+      )
+      : 1;
+
+    if (!keyword) continue;
+
+    targets.push({
+      keyword,
+      count,
+    });
+  }
+
+  const seen = new Set();
+
+  return targets
+    .filter((target) => {
+      if (seen.has(target.keyword)) {
+        return false;
+      }
+
+      seen.add(target.keyword);
+      return true;
+    })
+    .slice(0, 4);
+}
+
+function normalizeSmartWeekRequestConstraints(
+  value,
+) {
+  const rawVegetarianCount = Number(
+    value?.vegetarianNightCount,
+  );
+
+  const vegetarianNightCount =
+    Number.isFinite(rawVegetarianCount)
+      ? Math.max(
+        0,
+        Math.min(
+          7,
+          Math.round(rawVegetarianCount),
+        ),
+      )
+      : 0;
+
+  return {
+    excludedKeywords:
+      normalizeSmartWeekStringList(
+        value?.excludedKeywords,
+      ),
+
+    preferredKeywords:
+      normalizeSmartWeekStringList(
+        value?.preferredKeywords,
+      ),
+
+    preferredTags:
+      normalizeSmartWeekTags(
+        value?.preferredTags,
+      ),
+
+    mostlyQuick:
+      value?.mostlyQuick === true,
+
+    vegetarianNightCount,
+
+    pantryPriority:
+      value?.pantryPriority === true,
+
+    budgetPriority:
+      value?.budgetPriority === true,
+
+    kidFriendly:
+      value?.kidFriendly === true,
+
+    proteinTargets:
+      normalizeSmartWeekProteinTargets(
+        value?.proteinTargets,
+      ),
+  };
+}
+
+async function interpretSmartWeekRequestWithAI(
+  requestText,
+  language = "en",
+) {
+  if (!openai) {
+    throw new Error(
+      "OPENAI_API_KEY is not set.",
+    );
+  }
+
+  const prompt = `
+Interpret one optional weekly dinner-planning request for Simple Dinners.
+
+The user may write in English or Spanish.
+
+Your job is ONLY to translate the request into structured planning guidance.
+Do not select recipes.
+Do not invent recipe names.
+Do not weaken dietary restrictions.
+Do not infer allergies or medical restrictions that the user did not explicitly state.
+
+INTERPRETATION RULES:
+
+- excludedKeywords:
+  Include foods or meal types the user explicitly says to avoid, exclude, or not use.
+  Example: "No seafood" may include seafood-related exclusion keywords.
+  Do not treat a positive request as an exclusion.
+
+- preferredKeywords:
+  Include explicitly requested ingredients, proteins, cuisines, or meal styles.
+
+- preferredTags:
+  Use only tags that clearly match the request.
+
+- mostlyQuick:
+  True when the user asks for mostly quick, easy, simple, or low-effort meals.
+
+- vegetarianNightCount:
+  Use the explicitly requested number.
+  "One vegetarian night" becomes 1.
+  Do not make the whole week vegetarian unless explicitly requested.
+
+- pantryPriority:
+  True when the user asks to use ingredients already available, use the pantry, reduce waste, or use something before it expires.
+
+- budgetPriority:
+  True when the user asks for inexpensive, affordable, cheap, economical, or budget-friendly meals.
+
+- kidFriendly:
+  True when the user requests kid-friendly, family-friendly, picky-eater-friendly, or child-friendly meals.
+
+- proteinTargets:
+  Use only for an explicit requested count.
+  Example: "Use chicken twice" becomes:
+  [{ "keyword": "chicken", "count": 2 }]
+
+Return valid JSON only:
+
+{
+  "excludedKeywords": [],
+  "preferredKeywords": [],
+  "preferredTags": [],
+  "mostlyQuick": false,
+  "vegetarianNightCount": 0,
+  "pantryPriority": false,
+  "budgetPriority": false,
+  "kidFriendly": false,
+  "proteinTargets": []
+}
+
+Request language:
+${language}
+
+User request:
+${requestText}
+  `.trim();
+
+  const response =
+    await openai.chat.completions.create({
+      model:
+        process.env.OPENAI_MODEL ||
+        "gpt-5.5",
+
+      messages: [
+        {
+          role: "system",
+          content:
+            "You interpret optional dinner-planning requests for Simple Dinners. Return valid JSON only and never select or invent recipes.",
+        },
+        {
+          role: "user",
+          content: prompt,
+        },
+      ],
+    });
+
+  const content =
+    response.choices?.[0]?.message
+      ?.content || "";
+
+  const parsed = JSON.parse(
+    stripJsonCodeFence(content),
+  );
+
+  return normalizeSmartWeekRequestConstraints(
+    parsed,
+  );
 }
 
 // =====================================================
