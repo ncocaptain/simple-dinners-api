@@ -15,6 +15,15 @@ import {
   resolveSocialCaptionParts,
   chooseSocialRecipeTitle,
 } from "./socialCaptionResolver.js";
+import {
+  analyzeVideoRecipeEvidence,
+  cleanupVideoImportWorkspace,
+  prepareVideoImportInputs,
+} from "./videoImportHelpers.js";
+import {
+  importRecipeFromPublicVideoUrl,
+} from "./publicVideoImport.js";
+
 
 // =====================================================
 // App setup
@@ -53,6 +62,21 @@ if (!openaiApiKey) {
 }
 
 const SOURCE_STEPS_PLACEHOLDER = "Steps available at source link!";
+const VIDEO_MIME_TYPES = new Set([
+  "video/mp4",
+  "video/quicktime",
+  "video/webm",
+  "video/x-m4v",
+]);
+
+const VIDEO_FILE_EXTENSIONS = new Set([
+  "mp4",
+  "mov",
+  "webm",
+  "m4v",
+]);
+
+const MAX_VIDEO_FILE_BYTES = 75 * 1024 * 1024;
 
 const SCREENSHOT_MIME_TYPES = new Set([
   "image/jpeg",
@@ -69,6 +93,35 @@ app.get("/", async () => {
     version: "simple-dinners-api-importer-v1",
   };
 });
+
+function stripJsonCodeFence(value) {
+  return String(value || "")
+    .trim()
+    .replace(/^```(?:json)?\s*/i, "")
+    .replace(/\s*```$/i, "")
+    .trim();
+}
+
+function parseJsonResponse(value) {
+  const cleaned = stripJsonCodeFence(value);
+
+  try {
+    return JSON.parse(cleaned);
+  } catch {
+    const firstBrace = cleaned.indexOf("{");
+    const lastBrace = cleaned.lastIndexOf("}");
+
+    if (firstBrace >= 0 && lastBrace > firstBrace) {
+      return JSON.parse(
+        cleaned.slice(firstBrace, lastBrace + 1)
+      );
+    }
+
+    throw new Error(
+      "AI video analysis did not return valid JSON."
+    );
+  }
+}
 
 // =====================================================
 // POST /interpret-smart-week-request
@@ -467,6 +520,675 @@ app.post("/import-jsonld", async (request, reply) => {
       successLevel: "error",
       error: error instanceof Error ? error.message : "JSON-LD import failed",
     });
+  }
+});
+
+function getFileExtension(filename = "") {
+  const match = String(filename)
+    .trim()
+    .toLowerCase()
+    .match(/\.([a-z0-9]+)$/);
+
+  return match?.[1] || "";
+}
+
+// =====================================================
+// POST /import-video-url
+// Resolve an accessible public Instagram reel,
+// process its video and audio, and return a recipe
+// ready for Review Recipe.
+// =====================================================
+
+app.post("/import-video-url", async (request, reply) => {
+  const sourceUrl = String(
+    request.body?.url ||
+    request.body?.sourceUrl ||
+    ""
+  ).trim();
+
+  const language = String(
+    request.body?.language || "en"
+  )
+    .trim()
+    .toLowerCase()
+    .slice(0, 2);
+
+  if (!sourceUrl) {
+    return reply.code(400).send({
+      success: false,
+      successLevel: "missing-video-url",
+      error:
+        "Please provide an Instagram reel URL.",
+    });
+  }
+
+  if (!openai) {
+    return reply.code(503).send({
+      success: false,
+      successLevel: "ai-unavailable",
+      error:
+        "OPENAI_API_KEY is not configured.",
+    });
+  }
+
+  try {
+    console.log(
+      "Importing recipe from public video:",
+      {
+        sourceUrl,
+        language,
+      }
+    );
+
+    const result =
+      await importRecipeFromPublicVideoUrl({
+        sourceUrl,
+        language,
+
+        openai,
+        parseRecipeTextWithAI,
+        cleanText,
+        slugify,
+        applyAiCleanupToResult,
+      });
+
+    console.log(
+      "Public video recipe import complete:",
+      {
+        sourceUrl,
+        successLevel:
+          result.successLevel,
+        recipeName:
+          result.recipe?.name || "",
+        ingredientCount:
+          result.ingredients?.length || 0,
+        instructionCount:
+          result.instructions?.length || 0,
+      }
+    );
+
+    return reply.send(result);
+  } catch (error) {
+    request.log.error(error);
+
+    const errorCode = String(
+      error?.code || ""
+    );
+
+    let statusCode =
+      Number(error?.statusCode) || 500;
+
+    let successLevel =
+      "public-video-import-error";
+
+    let message =
+      "Simple Dinners could not import that public video.";
+
+    if (
+      errorCode ===
+      "INVALID_PUBLIC_VIDEO_URL" ||
+      errorCode ===
+      "UNSUPPORTED_PUBLIC_VIDEO_PLATFORM" ||
+      errorCode ===
+      "UNSUPPORTED_INSTAGRAM_PATH"
+    ) {
+      statusCode = 400;
+      successLevel =
+        "unsupported-video-url";
+      message =
+        error instanceof Error
+          ? error.message
+          : message;
+    } else if (
+      errorCode ===
+      "PUBLIC_VIDEO_NOT_FOUND" ||
+      errorCode ===
+      "PUBLIC_VIDEO_NO_RECIPE_FOUND"
+    ) {
+      statusCode = 422;
+      successLevel =
+        "public-video-unavailable";
+      message =
+        error instanceof Error
+          ? error.message
+          : message;
+    } else if (
+      errorCode ===
+      "PUBLIC_VIDEO_TOO_LARGE"
+    ) {
+      statusCode = 413;
+      successLevel =
+        "public-video-too-large";
+      message =
+        "That public video is larger than the supported limit.";
+    } else if (
+      errorCode ===
+      "AI_UNAVAILABLE"
+    ) {
+      statusCode = 503;
+      successLevel =
+        "ai-unavailable";
+      message =
+        "OPENAI_API_KEY is not configured.";
+    }
+
+    return reply
+      .code(statusCode)
+      .send({
+        success: false,
+        successLevel,
+
+        debugVersion:
+          "simple-dinners-api-public-video-import-v1",
+
+        importMethod:
+          "ai-public-video",
+        aiAssisted: true,
+
+        premiumFeatureKey:
+          "ai_video_import",
+        premiumEnforced: false,
+
+        sourceUrl,
+
+        error: message,
+      });
+  }
+});
+
+// =====================================================
+// POST /import-video
+// Receive one recipe video, extract frames and audio,
+// then return the spoken transcript for pipeline testing.
+// Recipe parsing will be added in the next checkpoint.
+// =====================================================
+
+app.post("/import-video", async (request, reply) => {
+  if (!request.isMultipart()) {
+    return reply.code(415).send({
+      success: false,
+      successLevel: "invalid-content-type",
+      error: "Video imports must use multipart/form-data.",
+    });
+  }
+
+  if (!openai) {
+    return reply.code(503).send({
+      success: false,
+      successLevel: "ai-unavailable",
+      error: "OPENAI_API_KEY is not configured.",
+    });
+  }
+
+  let preparedVideo = null;
+
+  try {
+    const { files, values } =
+      await request.saveRequestFiles({
+        limits: {
+          files: 1,
+          fileSize: MAX_VIDEO_FILE_BYTES,
+          fields: 4,
+          parts: 5,
+        },
+      });
+
+    const videoFile = files.find(
+      (file) => file.fieldname === "video"
+    );
+
+    if (!videoFile) {
+      return reply.code(400).send({
+        success: false,
+        successLevel: "no-video",
+        error: "Please choose a recipe video.",
+      });
+    }
+
+    const videoExtension = getFileExtension(videoFile.filename);
+
+    const hasSupportedMimeType =
+      VIDEO_MIME_TYPES.has(videoFile.mimetype);
+
+    const hasGenericMimeType =
+      !videoFile.mimetype ||
+      videoFile.mimetype === "application/octet-stream";
+
+    const hasSupportedExtension =
+      VIDEO_FILE_EXTENSIONS.has(videoExtension);
+
+    const videoTypeIsAllowed =
+      hasSupportedMimeType ||
+      (hasGenericMimeType && hasSupportedExtension);
+
+    if (!videoTypeIsAllowed) {
+      return reply.code(415).send({
+        success: false,
+        successLevel: "unsupported-video-type",
+        error: "Please upload an MP4, MOV, WebM, or M4V video.",
+        filename: videoFile.filename,
+        mimetype: videoFile.mimetype,
+        extension: videoExtension,
+      });
+    }
+
+    const languageValue =
+      values?.language?.value ??
+      values?.language ??
+      "en";
+
+    const sourceUrlValue =
+      values?.sourceUrl?.value ??
+      values?.sourceUrl ??
+      "";
+
+    const language = String(languageValue || "en")
+      .trim()
+      .toLowerCase()
+      .slice(0, 2);
+
+    const sourceUrl = String(sourceUrlValue || "").trim();
+
+    console.log("Preparing uploaded video:", {
+      filename: videoFile.filename,
+      mimetype: videoFile.mimetype,
+      language,
+      sourceUrl,
+    });
+
+    preparedVideo =
+      await prepareVideoImportInputs(
+        videoFile.filepath,
+        {
+          openai,
+          language,
+          frameIntervalSeconds: 2,
+          maxFrames: 12,
+          frameWidth: 720,
+        }
+      );
+
+    console.log("Video inputs prepared:", {
+      filename: videoFile.filename,
+      frameCount: preparedVideo.frameCount,
+      hasAudio: preparedVideo.hasAudio,
+      transcriptLength:
+        preparedVideo.transcriptText.length,
+    });
+
+    const videoEvidence =
+      await analyzeVideoRecipeEvidence(
+        {
+          framePaths: preparedVideo.framePaths,
+          transcriptText:
+            preparedVideo.transcriptText,
+        },
+        {
+          openai,
+          language,
+        }
+      );
+
+    console.log("Video recipe evidence analyzed:", {
+      hasRecipeContent:
+        videoEvidence.hasRecipeContent,
+      title: videoEvidence.title,
+      titleSource:
+        videoEvidence.titleSource,
+      visibleTextLength:
+        videoEvidence.visibleRecipeText.length,
+      spokenTextLength:
+        videoEvidence.spokenRecipeText.length,
+      combinedTextLength:
+        videoEvidence.combinedRecipeText.length,
+    });
+
+    if (
+      !videoEvidence.hasRecipeContent ||
+      !videoEvidence.combinedRecipeText
+    ) {
+      return reply.code(422).send({
+        success: false,
+        successLevel: "no-recipe-found",
+        debugVersion:
+          "simple-dinners-api-video-evidence-v1",
+
+        importMethod: "ai-video",
+        aiAssisted: true,
+
+        premiumFeatureKey:
+          "ai_video_import",
+        premiumEnforced: false,
+
+        sourceUrl,
+        language,
+
+        video: {
+          filename: videoFile.filename,
+          mimetype: videoFile.mimetype,
+          frameCount:
+            preparedVideo.frameCount,
+          hasAudio:
+            preparedVideo.hasAudio,
+        },
+
+        transcriptText:
+          preparedVideo.transcriptText,
+
+        evidence: videoEvidence,
+
+        error:
+          "Simple Dinners could not find enough recipe information in that video.",
+      });
+    }
+
+    const parsedVideoRecipe =
+      await parseRecipeTextWithAI(
+        videoEvidence.combinedRecipeText
+      );
+
+    const recipeName = cleanText(
+      parsedVideoRecipe?.name ||
+      videoEvidence.title ||
+      "Imported Video Recipe"
+    );
+
+    const parsedIngredients = Array.isArray(
+      parsedVideoRecipe?.ingredients
+    )
+      ? parsedVideoRecipe.ingredients
+        .map((ingredient) =>
+          cleanText(ingredient)
+        )
+        .filter(Boolean)
+      : [];
+
+    const parsedInstructions = Array.isArray(
+      parsedVideoRecipe?.instructions
+    )
+      ? parsedVideoRecipe.instructions
+        .map((instruction) =>
+          cleanText(instruction)
+        )
+        .filter(Boolean)
+      : [];
+
+    if (
+      parsedIngredients.length === 0 ||
+      parsedInstructions.length === 0
+    ) {
+      const partialRecipe = {
+        name: recipeName,
+        ingredients:
+          parsedIngredients.join("\n"),
+        instructions:
+          parsedInstructions.join("\n"),
+        photoUrl: "",
+        slug: `${slugify(recipeName)}-${Date.now()
+          .toString()
+          .slice(-4)}`,
+        sourceUrl,
+        effort: "normal",
+        importStatus: "video-import-partial",
+
+        // Preserve the evidence without presenting it
+        // as verified recipe instructions.
+        fallbackText:
+          videoEvidence.combinedRecipeText || "",
+      };
+
+      return reply.send({
+        success: true,
+        successLevel: "partial",
+
+        debugVersion:
+          "simple-dinners-api-video-import-v1",
+
+        importMethod: "ai-video",
+        aiAssisted: true,
+        readyForReview: true,
+        needsFinishing: true,
+
+        reviewWarning:
+          "Simple Dinners found part of this recipe. Review what was recovered and fill in anything missing.",
+
+        premiumFeatureKey:
+          "ai_video_import",
+        premiumEnforced: false,
+
+        sourceUrl,
+        importedFromUrl: sourceUrl,
+
+        name: recipeName,
+        ingredients: parsedIngredients,
+        instructions: parsedInstructions,
+
+        image: "",
+        linkedRecipeUrl: "",
+
+        recipe: partialRecipe,
+
+        video: {
+          filename: videoFile.filename,
+          mimetype: videoFile.mimetype,
+          frameCount:
+            preparedVideo.frameCount,
+          hasAudio:
+            preparedVideo.hasAudio,
+        },
+
+        transcriptText:
+          preparedVideo.transcriptText,
+
+        evidence: {
+          title: videoEvidence.title,
+          titleSource:
+            videoEvidence.titleSource,
+
+          visibleRecipeText:
+            videoEvidence.visibleRecipeText,
+
+          spokenRecipeText:
+            videoEvidence.spokenRecipeText,
+
+          combinedRecipeText:
+            videoEvidence.combinedRecipeText,
+
+          ingredientsAppearComplete:
+            videoEvidence.ingredientsAppearComplete,
+
+          instructionsAppearComplete:
+            videoEvidence.instructionsAppearComplete,
+
+          possibleMissingContent: true,
+
+          warnings: [
+            ...videoEvidence.warnings,
+            "The video did not contain a complete ingredient list and cooking method.",
+          ],
+        },
+
+        debug: {
+          videoImport: true,
+          evidenceExtracted: true,
+          partialRecipe: true,
+
+          originalTranscriptLength:
+            preparedVideo.transcriptText.length,
+
+          combinedEvidenceLength:
+            videoEvidence.combinedRecipeText.length,
+
+          parsedIngredientsCount:
+            parsedIngredients.length,
+
+          parsedInstructionsCount:
+            parsedInstructions.length,
+        },
+      });
+    }
+
+    const roughRecipe = {
+      name: recipeName,
+      ingredients:
+        parsedIngredients.join("\n"),
+      instructions:
+        parsedInstructions.join("\n"),
+      photoUrl: "",
+      slug: `${slugify(recipeName)}-${Date.now()
+        .toString()
+        .slice(-4)}`,
+      sourceUrl,
+      effort: "normal",
+      importStatus: "video-import",
+      fallbackText: "",
+    };
+
+    const videoImportResult = {
+      success: true,
+      successLevel: "full",
+
+      debugVersion:
+        "simple-dinners-api-video-import-v1",
+
+      importMethod: "ai-video",
+      aiAssisted: true,
+      readyForReview: true,
+
+      premiumFeatureKey:
+        "ai_video_import",
+      premiumEnforced: false,
+
+      sourceUrl,
+      importedFromUrl: sourceUrl,
+
+      name: recipeName,
+      ingredients: parsedIngredients,
+      instructions: parsedInstructions,
+
+      image: "",
+      linkedRecipeUrl: "",
+
+      recipe: roughRecipe,
+
+      video: {
+        filename: videoFile.filename,
+        mimetype: videoFile.mimetype,
+        frameCount:
+          preparedVideo.frameCount,
+        hasAudio:
+          preparedVideo.hasAudio,
+      },
+
+      transcriptText:
+        preparedVideo.transcriptText,
+
+      evidence: {
+        title: videoEvidence.title,
+        titleSource:
+          videoEvidence.titleSource,
+
+        visibleRecipeText:
+          videoEvidence.visibleRecipeText,
+
+        spokenRecipeText:
+          videoEvidence.spokenRecipeText,
+
+        combinedRecipeText:
+          videoEvidence.combinedRecipeText,
+
+        ingredientsAppearComplete:
+          videoEvidence.ingredientsAppearComplete,
+
+        instructionsAppearComplete:
+          videoEvidence.instructionsAppearComplete,
+
+        possibleMissingContent:
+          videoEvidence.possibleMissingContent,
+
+        warnings:
+          videoEvidence.warnings,
+      },
+
+      debug: {
+        videoImport: true,
+        evidenceExtracted: true,
+
+        originalTranscriptLength:
+          preparedVideo.transcriptText.length,
+
+        combinedEvidenceLength:
+          videoEvidence.combinedRecipeText.length,
+
+        parsedIngredientsCount:
+          parsedIngredients.length,
+
+        parsedInstructionsCount:
+          parsedInstructions.length,
+      },
+    };
+
+    const cleanedVideoResult =
+      await applyAiCleanupToResult(
+        videoImportResult
+      );
+
+    return reply.send({
+      ...cleanedVideoResult,
+
+      success: true,
+      successLevel: "full",
+
+      debugVersion:
+        "simple-dinners-api-video-import-v1",
+
+      importMethod: "ai-video",
+      aiAssisted: true,
+      readyForReview: true,
+
+      premiumFeatureKey:
+        "ai_video_import",
+      premiumEnforced: false,
+
+      video: videoImportResult.video,
+      transcriptText:
+        videoImportResult.transcriptText,
+      evidence: videoImportResult.evidence,
+    });
+  } catch (error) {
+    request.log.error(error);
+
+    const statusCode =
+      Number(error?.statusCode) || 500;
+
+    const errorCode = String(
+      error?.code || ""
+    );
+
+    const uploadLimitReached =
+      statusCode === 413 ||
+      errorCode.includes("LIMIT") ||
+      errorCode.includes("TOO_LARGE");
+
+    return reply
+      .code(uploadLimitReached ? 413 : 500)
+      .send({
+        success: false,
+        successLevel: uploadLimitReached
+          ? "video-too-large"
+          : "video-processing-error",
+        error: uploadLimitReached
+          ? "That video is too large. Choose a video smaller than 75 MB."
+          : error instanceof Error
+            ? error.message
+            : "Video processing failed.",
+      });
+  } finally {
+    if (preparedVideo?.workspaceDir) {
+      await cleanupVideoImportWorkspace(
+        preparedVideo.workspaceDir
+      );
+    }
   }
 });
 
@@ -2510,15 +3232,6 @@ const SMART_WEEK_ALLOWED_TAGS = new Set([
   "gluten-free",
   "low-carb",
 ]);
-
-function stripJsonCodeFence(value) {
-  return String(value || "")
-    .trim()
-    .replace(/^```json\s*/i, "")
-    .replace(/^```\s*/i, "")
-    .replace(/\s*```$/i, "")
-    .trim();
-}
 
 function normalizeSmartWeekStringList(
   value,
