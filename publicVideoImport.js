@@ -22,10 +22,12 @@ function createPipelineError(message, code, statusCode = 500) {
 }
 
 function normalizeLanguage(value) {
-  return String(value || "en")
-    .trim()
-    .toLowerCase()
-    .slice(0, 2) || "en";
+  return (
+    String(value || "en")
+      .trim()
+      .toLowerCase()
+      .slice(0, 2) || "en"
+  );
 }
 
 function normalizeStringArray(value, cleanText) {
@@ -44,23 +46,59 @@ function makeRecipeSlug(recipeName, slugify) {
     .slice(-4)}`;
 }
 
-function buildVideoMetadata({
-  filename,
-  mimetype,
-  preparedVideo,
-}) {
+function createEmptyVideoEvidence() {
   return {
-    filename,
-    mimetype,
-    frameCount: preparedVideo.frameCount,
-    hasAudio: preparedVideo.hasAudio,
+    hasRecipeContent: false,
+    title: "",
+    titleSource: "",
+    visibleRecipeText: "",
+    spokenRecipeText: "",
+    combinedRecipeText: "",
+    ingredientsAppearComplete: false,
+    instructionsAppearComplete: false,
+    possibleMissingContent: true,
+    warnings: [],
   };
 }
 
-function buildEvidenceMetadata(videoEvidence) {
+function buildVideoMetadata({
+  preparedVideo,
+  error,
+}) {
+  if (!preparedVideo) {
+    return {
+      filename: "",
+      mimetype: "",
+      frameCount: 0,
+      hasAudio: false,
+      available: false,
+      error:
+        error instanceof Error
+          ? error.message
+          : "",
+    };
+  }
+
+  return {
+    filename:
+      "resolved-instagram-video.mp4",
+    mimetype: "video/mp4",
+    frameCount:
+      preparedVideo.frameCount,
+    hasAudio:
+      preparedVideo.hasAudio,
+    available: true,
+    error: "",
+  };
+}
+
+function buildEvidenceMetadata(
+  videoEvidence
+) {
   return {
     title: videoEvidence.title,
-    titleSource: videoEvidence.titleSource,
+    titleSource:
+      videoEvidence.titleSource,
     visibleRecipeText:
       videoEvidence.visibleRecipeText,
     spokenRecipeText:
@@ -73,21 +111,50 @@ function buildEvidenceMetadata(videoEvidence) {
       videoEvidence.instructionsAppearComplete,
     possibleMissingContent:
       videoEvidence.possibleMissingContent,
-    warnings: videoEvidence.warnings,
+    warnings:
+      Array.isArray(
+        videoEvidence.warnings
+      )
+        ? videoEvidence.warnings
+        : [],
   };
 }
 
-function buildResolvedPublicVideoMetadata(resolvedVideo) {
+function buildResolvedPublicVideoMetadata(
+  resolvedVideo,
+  error
+) {
+  if (!resolvedVideo) {
+    return {
+      platform: "instagram",
+      available: false,
+      durationSeconds: 0,
+      sizeBytes: 0,
+      hasAudio: false,
+      candidateCount: 0,
+      uniqueTrackCount: 0,
+      error:
+        error instanceof Error
+          ? error.message
+          : "",
+    };
+  }
+
   return {
-    platform: resolvedVideo.platform,
+    platform:
+      resolvedVideo.platform,
+    available: true,
     durationSeconds:
       resolvedVideo.durationSeconds,
-    sizeBytes: resolvedVideo.sizeBytes,
-    hasAudio: resolvedVideo.hasAudio,
+    sizeBytes:
+      resolvedVideo.sizeBytes,
+    hasAudio:
+      resolvedVideo.hasAudio,
     candidateCount:
       resolvedVideo.candidateCount,
     uniqueTrackCount:
       resolvedVideo.uniqueTrackCount,
+    error: "",
   };
 }
 
@@ -153,6 +220,38 @@ function buildCombinedPublicRecipeEvidence({
   return sections.join("\n\n").trim();
 }
 
+function normalizeParsedRecipe(
+  parsedRecipe,
+  cleanText
+) {
+  return {
+    name: cleanText(
+      parsedRecipe?.name || ""
+    ),
+
+    ingredients:
+      normalizeStringArray(
+        parsedRecipe?.ingredients,
+        cleanText
+      ),
+
+    instructions:
+      normalizeStringArray(
+        parsedRecipe?.instructions,
+        cleanText
+      ),
+  };
+}
+
+function parsedRecipeIsFull(
+  parsedRecipe
+) {
+  return (
+    parsedRecipe.ingredients.length > 0 &&
+    parsedRecipe.instructions.length > 0
+  );
+}
+
 export async function importRecipeFromPublicVideoUrl({
   sourceUrl,
   language = "en",
@@ -175,28 +274,38 @@ export async function importRecipeFromPublicVideoUrl({
     );
   }
 
-  if (typeof parseRecipeTextWithAI !== "function") {
+  if (
+    typeof parseRecipeTextWithAI !==
+    "function"
+  ) {
     throw createPipelineError(
       "The recipe text parser is unavailable.",
       "VIDEO_RECIPE_PARSER_UNAVAILABLE"
     );
   }
 
-  if (typeof cleanText !== "function") {
+  if (
+    typeof cleanText !== "function"
+  ) {
     throw createPipelineError(
       "The text cleanup helper is unavailable.",
       "VIDEO_TEXT_CLEANER_UNAVAILABLE"
     );
   }
 
-  if (typeof slugify !== "function") {
+  if (
+    typeof slugify !== "function"
+  ) {
     throw createPipelineError(
       "The recipe slug helper is unavailable.",
       "VIDEO_SLUG_HELPER_UNAVAILABLE"
     );
   }
 
-  if (typeof applyAiCleanupToResult !== "function") {
+  if (
+    typeof applyAiCleanupToResult !==
+    "function"
+  ) {
     throw createPipelineError(
       "The recipe cleanup helper is unavailable.",
       "VIDEO_RECIPE_CLEANUP_UNAVAILABLE"
@@ -210,10 +319,22 @@ export async function importRecipeFromPublicVideoUrl({
     await createPublicVideoResolverWorkspace();
 
   let preparedVideo = null;
+  let resolvedVideo = null;
+  let videoResolveError = null;
+
   let captionResult = null;
   let captionError = null;
 
+  let videoEvidence =
+    createEmptyVideoEvidence();
+
   try {
+    // ---------------------------------------------------
+    // Layer 1: Instagram caption
+    // This is the fastest and most reliable source when
+    // the creator included the complete recipe in text.
+    // ---------------------------------------------------
+
     try {
       captionResult =
         await resolveInstagramCaption(
@@ -223,63 +344,142 @@ export async function importRecipeFromPublicVideoUrl({
       captionError = error;
     }
 
-    const resolvedVideo =
-      await resolvePublicVideoToFile(
-        sourceUrl,
-        {
-          workspaceDir:
-            publicVideoWorkspace,
-        }
-      );
-
-    preparedVideo =
-      await prepareVideoImportInputs(
-        resolvedVideo.outputPath,
-        {
-          openai,
-          language:
-            normalizedLanguage,
-          frameIntervalSeconds,
-          maxFrames,
-          frameWidth,
-        }
-      );
-
-    const videoEvidence =
-      await analyzeVideoRecipeEvidence(
-        {
-          framePaths:
-            preparedVideo.framePaths,
-          transcriptText:
-            preparedVideo.transcriptText,
-        },
-        {
-          openai,
-          language:
-            normalizedLanguage,
-        }
-      );
-
     const instagramCaption =
       buildInstagramCaptionMetadata(
         captionResult,
         captionError
       );
 
-    const videoEvidenceText =
-      videoEvidence.hasRecipeContent
-        ? String(
-            videoEvidence.combinedRecipeText ||
-            ""
-          ).trim()
+    const captionEvidence =
+      instagramCaption.text
+        ? `Instagram caption:\n${instagramCaption.text}`
         : "";
 
-    const combinedRecipeEvidence =
-      buildCombinedPublicRecipeEvidence({
-        captionText:
-          instagramCaption.text,
-        videoEvidenceText,
-      });
+    let parsedRecipe =
+      normalizeParsedRecipe(
+        null,
+        cleanText
+      );
+
+    let combinedRecipeEvidence =
+      captionEvidence;
+
+    let processingPath =
+      "caption-unavailable";
+
+    if (captionEvidence) {
+      const parsedCaption =
+        await parseRecipeTextWithAI(
+          captionEvidence
+        );
+
+      parsedRecipe =
+        normalizeParsedRecipe(
+          parsedCaption,
+          cleanText
+        );
+
+      processingPath =
+        parsedRecipeIsFull(
+          parsedRecipe
+        )
+          ? "caption-first-full"
+          : "caption-first-partial";
+    }
+
+    // ---------------------------------------------------
+    // Layer 2: Public video
+    // Only needed when the caption did not already supply
+    // a complete ingredient list and cooking method.
+    // Failure is nonfatal when caption evidence exists.
+    // ---------------------------------------------------
+
+    if (
+      !parsedRecipeIsFull(
+        parsedRecipe
+      )
+    ) {
+      try {
+        resolvedVideo =
+          await resolvePublicVideoToFile(
+            sourceUrl,
+            {
+              workspaceDir:
+                publicVideoWorkspace,
+            }
+          );
+
+        preparedVideo =
+          await prepareVideoImportInputs(
+            resolvedVideo.outputPath,
+            {
+              openai,
+              language:
+                normalizedLanguage,
+              frameIntervalSeconds,
+              maxFrames,
+              frameWidth,
+            }
+          );
+
+        videoEvidence =
+          await analyzeVideoRecipeEvidence(
+            {
+              framePaths:
+                preparedVideo.framePaths,
+              transcriptText:
+                preparedVideo.transcriptText,
+            },
+            {
+              openai,
+              language:
+                normalizedLanguage,
+            }
+          );
+
+        const videoEvidenceText =
+          videoEvidence.hasRecipeContent
+            ? String(
+                videoEvidence.combinedRecipeText ||
+                ""
+              ).trim()
+            : "";
+
+        combinedRecipeEvidence =
+          buildCombinedPublicRecipeEvidence({
+            captionText:
+              instagramCaption.text,
+            videoEvidenceText,
+          });
+
+        if (
+          combinedRecipeEvidence
+        ) {
+          const parsedCombined =
+            await parseRecipeTextWithAI(
+              combinedRecipeEvidence
+            );
+
+          parsedRecipe =
+            normalizeParsedRecipe(
+              parsedCombined,
+              cleanText
+            );
+        }
+
+        processingPath =
+          instagramCaption.text
+            ? "caption-and-video"
+            : "video-only";
+      } catch (error) {
+        videoResolveError = error;
+
+        processingPath =
+          instagramCaption.text
+            ? "caption-only-video-unavailable"
+            : "video-unavailable";
+      }
+    }
 
     if (!combinedRecipeEvidence) {
       const error = createPipelineError(
@@ -289,22 +489,24 @@ export async function importRecipeFromPublicVideoUrl({
       );
 
       error.details = {
-        resolvedPublicVideo:
-          buildResolvedPublicVideoMetadata(
-            resolvedVideo
-          ),
-
         instagramCaption,
 
-        video: buildVideoMetadata({
-          filename:
-            "resolved-instagram-video.mp4",
-          mimetype: "video/mp4",
-          preparedVideo,
-        }),
+        resolvedPublicVideo:
+          buildResolvedPublicVideoMetadata(
+            resolvedVideo,
+            videoResolveError
+          ),
+
+        video:
+          buildVideoMetadata({
+            preparedVideo,
+            error:
+              videoResolveError,
+          }),
 
         transcriptText:
-          preparedVideo.transcriptText,
+          preparedVideo?.transcriptText ||
+          "",
 
         evidence:
           buildEvidenceMetadata(
@@ -315,28 +517,11 @@ export async function importRecipeFromPublicVideoUrl({
       throw error;
     }
 
-    const parsedVideoRecipe =
-      await parseRecipeTextWithAI(
-        combinedRecipeEvidence
-      );
-
     const recipeName = cleanText(
-      parsedVideoRecipe?.name ||
+      parsedRecipe.name ||
         videoEvidence.title ||
         "Imported Video Recipe"
     );
-
-    const parsedIngredients =
-      normalizeStringArray(
-        parsedVideoRecipe?.ingredients,
-        cleanText
-      );
-
-    const parsedInstructions =
-      normalizeStringArray(
-        parsedVideoRecipe?.instructions,
-        cleanText
-      );
 
     const recipeSlug =
       makeRecipeSlug(
@@ -344,16 +529,61 @@ export async function importRecipeFromPublicVideoUrl({
         slugify
       );
 
-    const videoMetadata =
-      buildVideoMetadata({
-        filename:
-          "resolved-instagram-video.mp4",
-        mimetype: "video/mp4",
-        preparedVideo,
-      });
+    const sourceResultUrl =
+      String(
+        captionResult?.sourceUrl ||
+        resolvedVideo?.sourceUrl ||
+        sourceUrl ||
+        ""
+      ).trim();
 
     const photoUrl =
-      instagramCaption.imageUrl || "";
+      instagramCaption.imageUrl ||
+      "";
+
+    const videoMetadata =
+      buildVideoMetadata({
+        preparedVideo,
+        error:
+          videoResolveError,
+      });
+
+    const resolvedPublicVideo =
+      buildResolvedPublicVideoMetadata(
+        resolvedVideo,
+        videoResolveError
+      );
+
+    const transcriptText =
+      preparedVideo?.transcriptText ||
+      "";
+
+    const videoEvidenceText =
+      videoEvidence.hasRecipeContent
+        ? String(
+            videoEvidence.combinedRecipeText ||
+            ""
+          ).trim()
+        : "";
+
+    const evidenceWarnings = [
+      ...(
+        Array.isArray(
+          videoEvidence.warnings
+        )
+          ? videoEvidence.warnings
+          : []
+      ),
+    ];
+
+    if (
+      videoResolveError &&
+      instagramCaption.text
+    ) {
+      evidenceWarnings.push(
+        "The public video could not be accessed in this environment, so the recipe was built from the Instagram caption."
+      );
+    }
 
     const evidenceMetadata = {
       ...buildEvidenceMetadata(
@@ -361,29 +591,75 @@ export async function importRecipeFromPublicVideoUrl({
       ),
 
       captionUsed:
-        Boolean(instagramCaption.text),
+        Boolean(
+          instagramCaption.text
+        ),
 
       instagramCaption,
 
       combinedRecipeText:
         combinedRecipeEvidence,
+
+      videoAvailable:
+        Boolean(resolvedVideo),
+
+      videoError:
+        videoResolveError instanceof Error
+          ? videoResolveError.message
+          : "",
+
+      warnings:
+        evidenceWarnings,
     };
 
-    const resolvedPublicVideo =
-      buildResolvedPublicVideoMetadata(
-        resolvedVideo
-      );
+    const baseDebug = {
+      publicVideoImport: true,
+
+      videoImport:
+        Boolean(resolvedVideo),
+
+      captionImport:
+        Boolean(
+          instagramCaption.text
+        ),
+
+      processingPath,
+
+      evidenceExtracted:
+        Boolean(
+          combinedRecipeEvidence
+        ),
+
+      originalTranscriptLength:
+        transcriptText.length,
+
+      combinedEvidenceLength:
+        combinedRecipeEvidence.length,
+
+      captionEvidenceLength:
+        instagramCaption.text.length,
+
+      videoEvidenceLength:
+        videoEvidenceText.length,
+
+      parsedIngredientsCount:
+        parsedRecipe.ingredients.length,
+
+      parsedInstructionsCount:
+        parsedRecipe.instructions.length,
+    };
 
     if (
-      parsedIngredients.length === 0 ||
-      parsedInstructions.length === 0
+      !parsedRecipeIsFull(
+        parsedRecipe
+      )
     ) {
       return {
         success: true,
         successLevel: "partial",
 
         debugVersion:
-          "simple-dinners-api-public-video-import-v2",
+          "simple-dinners-api-public-video-import-v3",
 
         importMethod:
           "ai-public-video",
@@ -399,32 +675,43 @@ export async function importRecipeFromPublicVideoUrl({
         premiumEnforced: false,
 
         sourceUrl:
-          resolvedVideo.sourceUrl,
+          sourceResultUrl,
         importedFromUrl:
-          resolvedVideo.sourceUrl,
+          sourceResultUrl,
 
         name: recipeName,
         ingredients:
-          parsedIngredients,
+          parsedRecipe.ingredients,
         instructions:
-          parsedInstructions,
+          parsedRecipe.instructions,
 
         image: photoUrl,
         linkedRecipeUrl: "",
 
         recipe: {
           name: recipeName,
+
           ingredients:
-            parsedIngredients.join("\n"),
+            parsedRecipe.ingredients.join(
+              "\n"
+            ),
+
           instructions:
-            parsedInstructions.join("\n"),
+            parsedRecipe.instructions.join(
+              "\n"
+            ),
+
           photoUrl,
           slug: recipeSlug,
+
           sourceUrl:
-            resolvedVideo.sourceUrl,
+            sourceResultUrl,
+
           effort: "normal",
+
           importStatus:
             "public-video-import-partial",
+
           fallbackText:
             combinedRecipeEvidence,
         },
@@ -432,59 +719,48 @@ export async function importRecipeFromPublicVideoUrl({
         resolvedPublicVideo,
         instagramCaption,
         video: videoMetadata,
-
-        transcriptText:
-          preparedVideo.transcriptText,
+        transcriptText,
 
         evidence: {
           ...evidenceMetadata,
           possibleMissingContent: true,
           warnings: [
             ...evidenceMetadata.warnings,
-            "The video did not contain a complete ingredient list and cooking method.",
+            "The available Instagram evidence did not contain a complete ingredient list and cooking method.",
           ],
         },
 
         debug: {
-          publicVideoImport: true,
-          videoImport: true,
-          evidenceExtracted: true,
+          ...baseDebug,
           partialRecipe: true,
-
-          originalTranscriptLength:
-            preparedVideo.transcriptText.length,
-
-          combinedEvidenceLength:
-            combinedRecipeEvidence.length,
-
-          captionEvidenceLength:
-            instagramCaption.text.length,
-
-          videoEvidenceLength:
-            videoEvidenceText.length,
-
-          parsedIngredientsCount:
-            parsedIngredients.length,
-
-          parsedInstructionsCount:
-            parsedInstructions.length,
         },
       };
     }
 
     const roughRecipe = {
       name: recipeName,
+
       ingredients:
-        parsedIngredients.join("\n"),
+        parsedRecipe.ingredients.join(
+          "\n"
+        ),
+
       instructions:
-        parsedInstructions.join("\n"),
+        parsedRecipe.instructions.join(
+          "\n"
+        ),
+
       photoUrl,
       slug: recipeSlug,
+
       sourceUrl:
-        resolvedVideo.sourceUrl,
+        sourceResultUrl,
+
       effort: "normal",
+
       importStatus:
         "public-video-import",
+
       fallbackText: "",
     };
 
@@ -493,27 +769,32 @@ export async function importRecipeFromPublicVideoUrl({
       successLevel: "full",
 
       debugVersion:
-        "simple-dinners-api-public-video-import-v2",
+        "simple-dinners-api-public-video-import-v3",
 
       importMethod:
         "ai-public-video",
+
       aiAssisted: true,
       readyForReview: true,
 
       premiumFeatureKey:
         "ai_video_import",
+
       premiumEnforced: false,
 
       sourceUrl:
-        resolvedVideo.sourceUrl,
+        sourceResultUrl,
+
       importedFromUrl:
-        resolvedVideo.sourceUrl,
+        sourceResultUrl,
 
       name: recipeName,
+
       ingredients:
-        parsedIngredients,
+        parsedRecipe.ingredients,
+
       instructions:
-        parsedInstructions,
+        parsedRecipe.instructions,
 
       image: photoUrl,
       linkedRecipeUrl: "",
@@ -523,36 +804,13 @@ export async function importRecipeFromPublicVideoUrl({
       resolvedPublicVideo,
       instagramCaption,
       video: videoMetadata,
-
-      transcriptText:
-        preparedVideo.transcriptText,
+      transcriptText,
 
       evidence:
         evidenceMetadata,
 
-      debug: {
-        publicVideoImport: true,
-        videoImport: true,
-        evidenceExtracted: true,
-
-        originalTranscriptLength:
-          preparedVideo.transcriptText.length,
-
-        combinedEvidenceLength:
-          combinedRecipeEvidence.length,
-
-        captionEvidenceLength:
-          instagramCaption.text.length,
-
-        videoEvidenceLength:
-          videoEvidenceText.length,
-
-        parsedIngredientsCount:
-          parsedIngredients.length,
-
-        parsedInstructionsCount:
-          parsedInstructions.length,
-      },
+      debug:
+        baseDebug,
     };
 
     const cleanedResult =
@@ -567,32 +825,36 @@ export async function importRecipeFromPublicVideoUrl({
       successLevel: "full",
 
       debugVersion:
-        "simple-dinners-api-public-video-import-v2",
+        "simple-dinners-api-public-video-import-v3",
 
       importMethod:
         "ai-public-video",
+
       aiAssisted: true,
       readyForReview: true,
 
       premiumFeatureKey:
         "ai_video_import",
+
       premiumEnforced: false,
 
       resolvedPublicVideo,
       instagramCaption,
+
       image:
         cleanedResult?.image ||
         photoUrl,
-      video: videoMetadata,
 
-      transcriptText:
-        preparedVideo.transcriptText,
+      video: videoMetadata,
+      transcriptText,
 
       evidence:
         evidenceMetadata,
     };
   } finally {
-    if (preparedVideo?.workspaceDir) {
+    if (
+      preparedVideo?.workspaceDir
+    ) {
       await cleanupVideoImportWorkspace(
         preparedVideo.workspaceDir
       );

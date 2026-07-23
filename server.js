@@ -679,7 +679,7 @@ app.post("/import-video-url", async (request, reply) => {
         successLevel,
 
         debugVersion:
-          "simple-dinners-api-public-video-import-v1",
+          "simple-dinners-api-public-video-import-v3",
 
         importMethod:
           "ai-public-video",
