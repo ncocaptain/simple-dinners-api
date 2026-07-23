@@ -23,6 +23,9 @@ import {
 import {
   importRecipeFromPublicVideoUrl,
 } from "./publicVideoImport.js";
+import {
+  importRecipeFromPublicTikTokUrl,
+} from "./publicTikTokImport.js";
 
 
 // =====================================================
@@ -534,16 +537,43 @@ function getFileExtension(filename = "") {
 
 // =====================================================
 // POST /import-video-url
-// Resolve an accessible public Instagram reel,
-// process its video and audio, and return a recipe
-// ready for Review Recipe.
+// Import a public Instagram reel or TikTok video and
+// return a recipe ready for Review Recipe.
 // =====================================================
+
+function detectPublicVideoPlatform(value) {
+  try {
+    const hostname = new URL(
+      String(value || "").trim()
+    ).hostname
+      .toLowerCase()
+      .replace(/\.$/, "");
+
+    if (
+      hostname === "tiktok.com" ||
+      hostname.endsWith(".tiktok.com")
+    ) {
+      return "tiktok";
+    }
+
+    if (
+      hostname === "instagram.com" ||
+      hostname.endsWith(".instagram.com")
+    ) {
+      return "instagram";
+    }
+  } catch {
+    return "";
+  }
+
+  return "";
+}
 
 app.post("/import-video-url", async (request, reply) => {
   const sourceUrl = String(
     request.body?.url ||
-    request.body?.sourceUrl ||
-    ""
+      request.body?.sourceUrl ||
+      ""
   ).trim();
 
   const language = String(
@@ -558,7 +588,23 @@ app.post("/import-video-url", async (request, reply) => {
       success: false,
       successLevel: "missing-video-url",
       error:
-        "Please provide an Instagram reel URL.",
+        "Please provide an Instagram or TikTok video URL.",
+    });
+  }
+
+  const platform =
+    detectPublicVideoPlatform(
+      sourceUrl
+    );
+
+  if (!platform) {
+    return reply.code(400).send({
+      success: false,
+      successLevel:
+        "unsupported-video-url",
+      error:
+        "Please provide a public Instagram reel or TikTok video URL.",
+      sourceUrl,
     });
   }
 
@@ -577,11 +623,17 @@ app.post("/import-video-url", async (request, reply) => {
       {
         sourceUrl,
         language,
+        platform,
       }
     );
 
+    const importer =
+      platform === "tiktok"
+        ? importRecipeFromPublicTikTokUrl
+        : importRecipeFromPublicVideoUrl;
+
     const result =
-      await importRecipeFromPublicVideoUrl({
+      await importer({
         sourceUrl,
         language,
 
@@ -596,6 +648,7 @@ app.post("/import-video-url", async (request, reply) => {
       "Public video recipe import complete:",
       {
         sourceUrl,
+        platform,
         successLevel:
           result.successLevel,
         recipeName:
@@ -624,30 +677,46 @@ app.post("/import-video-url", async (request, reply) => {
     let message =
       "Simple Dinners could not import that public video.";
 
+    const invalidUrlErrors =
+      new Set([
+        "INVALID_PUBLIC_VIDEO_URL",
+        "UNSUPPORTED_PUBLIC_VIDEO_PLATFORM",
+        "UNSUPPORTED_INSTAGRAM_PATH",
+        "INVALID_TIKTOK_URL",
+        "INVALID_TIKTOK_PROTOCOL",
+        "UNSUPPORTED_TIKTOK_HOST",
+      ]);
+
+    const unavailableErrors =
+      new Set([
+        "PUBLIC_VIDEO_NOT_FOUND",
+        "PUBLIC_VIDEO_NO_RECIPE_FOUND",
+        "TIKTOK_CAPTION_UNAVAILABLE",
+        "TIKTOK_OEMBED_FAILED",
+      ]);
+
     if (
-      errorCode ===
-      "INVALID_PUBLIC_VIDEO_URL" ||
-      errorCode ===
-      "UNSUPPORTED_PUBLIC_VIDEO_PLATFORM" ||
-      errorCode ===
-      "UNSUPPORTED_INSTAGRAM_PATH"
+      invalidUrlErrors.has(
+        errorCode
+      )
     ) {
       statusCode = 400;
       successLevel =
         "unsupported-video-url";
+
       message =
         error instanceof Error
           ? error.message
           : message;
     } else if (
-      errorCode ===
-      "PUBLIC_VIDEO_NOT_FOUND" ||
-      errorCode ===
-      "PUBLIC_VIDEO_NO_RECIPE_FOUND"
+      unavailableErrors.has(
+        errorCode
+      )
     ) {
       statusCode = 422;
       successLevel =
         "public-video-unavailable";
+
       message =
         error instanceof Error
           ? error.message
@@ -659,8 +728,29 @@ app.post("/import-video-url", async (request, reply) => {
       statusCode = 413;
       successLevel =
         "public-video-too-large";
+
       message =
         "That public video is larger than the supported limit.";
+    } else if (
+      errorCode ===
+      "TIKTOK_TIMEOUT"
+    ) {
+      statusCode = 504;
+      successLevel =
+        "public-video-timeout";
+
+      message =
+        "TikTok took too long to respond. Please try again.";
+    } else if (
+      errorCode ===
+      "INVALID_TIKTOK_OEMBED"
+    ) {
+      statusCode = 502;
+      successLevel =
+        "public-video-response-error";
+
+      message =
+        "TikTok returned an unreadable response.";
     } else if (
       errorCode ===
       "AI_UNAVAILABLE"
@@ -668,18 +758,22 @@ app.post("/import-video-url", async (request, reply) => {
       statusCode = 503;
       successLevel =
         "ai-unavailable";
+
       message =
         "OPENAI_API_KEY is not configured.";
     }
+
+    const debugVersion =
+      platform === "tiktok"
+        ? "simple-dinners-api-public-tiktok-import-v1"
+        : "simple-dinners-api-public-video-import-v3";
 
     return reply
       .code(statusCode)
       .send({
         success: false,
         successLevel,
-
-        debugVersion:
-          "simple-dinners-api-public-video-import-v3",
+        debugVersion,
 
         importMethod:
           "ai-public-video",
@@ -689,6 +783,7 @@ app.post("/import-video-url", async (request, reply) => {
           "ai_video_import",
         premiumEnforced: false,
 
+        platform,
         sourceUrl,
 
         error: message,
