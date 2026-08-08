@@ -26,6 +26,11 @@ import {
 import {
   importRecipeFromPublicTikTokUrl,
 } from "./publicTikTokImport.js";
+import {
+  createFacebookVideoResolverWorkspace,
+  cleanupFacebookVideoResolverWorkspace,
+  resolveFacebookVideoToFile,
+} from "./facebookVideoResolver.js";
 
 
 // =====================================================
@@ -536,6 +541,94 @@ function getFileExtension(filename = "") {
 }
 
 // =====================================================
+// TEMPORARY: Facebook Reel media probe
+// Remove after Render verification.
+// =====================================================
+
+app.post(
+  "/debug-facebook-video",
+  async (request, reply) => {
+    const expectedKey = String(
+      process.env.FACEBOOK_VIDEO_PROBE_KEY || ""
+    ).trim();
+
+    const providedKey = String(
+      request.headers[
+      "x-facebook-video-probe-key"
+      ] || ""
+    ).trim();
+
+    if (
+      !expectedKey ||
+      providedKey !== expectedKey
+    ) {
+      return reply.code(404).send({
+        success: false,
+        error: "Not found",
+      });
+    }
+
+    const sourceUrl =
+      "https://www.facebook.com/reel/1560264575822702";
+
+    const workspace =
+      await createFacebookVideoResolverWorkspace();
+
+    try {
+      const result =
+        await resolveFacebookVideoToFile(
+          sourceUrl,
+          {
+            workspaceDir:
+              workspace,
+          }
+        );
+
+      return reply.send({
+        success: true,
+        platform:
+          result.platform,
+        canonicalUrl:
+          result.canonicalUrl,
+        sizeBytes:
+          result.sizeBytes,
+        selectedQuality:
+          result.selectedQuality,
+        candidateCount:
+          result.candidateCount,
+        imageFound:
+          Boolean(
+            result.imageUrl
+          ),
+        oEmbedFound:
+          Boolean(
+            result.oEmbedUrl
+          ),
+      });
+    } catch (error) {
+      console.error(
+        "Facebook video probe failed:",
+        error
+      );
+
+      return reply.code(500).send({
+        success: false,
+        error:
+          error instanceof Error
+            ? error.message
+            : "Facebook video probe failed",
+        code:
+          error?.code || "",
+      });
+    } finally {
+      await cleanupFacebookVideoResolverWorkspace(
+        workspace
+      );
+    }
+  }
+);
+
+// =====================================================
 // POST /import-video-url
 // Import a public Instagram reel or TikTok video and
 // return a recipe ready for Review Recipe.
@@ -572,8 +665,8 @@ function detectPublicVideoPlatform(value) {
 app.post("/import-video-url", async (request, reply) => {
   const sourceUrl = String(
     request.body?.url ||
-      request.body?.sourceUrl ||
-      ""
+    request.body?.sourceUrl ||
+    ""
   ).trim();
 
   const language = String(
