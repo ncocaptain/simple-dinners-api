@@ -574,6 +574,8 @@ app.post(
     const workspace =
       await createFacebookVideoResolverWorkspace();
 
+    let preparedVideo = null;
+
     try {
       const result =
         await resolveFacebookVideoToFile(
@@ -584,26 +586,100 @@ app.post(
           }
         );
 
+      preparedVideo =
+        await prepareVideoImportInputs(
+          result.outputPath,
+          {
+            openai,
+            language: "en",
+            frameIntervalSeconds: 1,
+            maxFrames: 12,
+            frameWidth: 720,
+          }
+        );
+
+      const evidence =
+        await analyzeVideoRecipeEvidence(
+          {
+            framePaths:
+              preparedVideo.framePaths,
+            transcriptText:
+              preparedVideo.transcriptText,
+          },
+          {
+            openai,
+            language: "en",
+          }
+        );
+
       return reply.send({
         success: true,
+
         platform:
           result.platform,
+
         canonicalUrl:
           result.canonicalUrl,
+
         sizeBytes:
           result.sizeBytes,
+
         selectedQuality:
           result.selectedQuality,
+
         candidateCount:
           result.candidateCount,
+
         imageFound:
           Boolean(
             result.imageUrl
           ),
+
         oEmbedFound:
           Boolean(
             result.oEmbedUrl
           ),
+
+        frameCount:
+          preparedVideo.frameCount,
+
+        hasAudio:
+          preparedVideo.hasAudio,
+
+        transcriptText:
+          preparedVideo.transcriptText,
+
+        evidence: {
+          hasRecipeContent:
+            evidence.hasRecipeContent,
+
+          title:
+            evidence.title,
+
+          titleSource:
+            evidence.titleSource,
+
+          visibleRecipeText:
+            evidence.visibleRecipeText,
+
+          spokenRecipeText:
+            evidence.spokenRecipeText,
+
+          combinedRecipeText:
+            evidence.combinedRecipeText,
+
+          ingredientsAppearComplete:
+            evidence.ingredientsAppearComplete,
+
+          instructionsAppearComplete:
+            evidence.instructionsAppearComplete,
+
+          possibleMissingContent:
+            evidence.possibleMissingContent,
+
+          warnings:
+            evidence.warnings,
+        },
       });
     } catch (error) {
       console.error(
@@ -621,6 +697,12 @@ app.post(
           error?.code || "",
       });
     } finally {
+      if (preparedVideo?.workspaceDir) {
+        await cleanupVideoImportWorkspace(
+          preparedVideo.workspaceDir
+        );
+      }
+
       await cleanupFacebookVideoResolverWorkspace(
         workspace
       );
