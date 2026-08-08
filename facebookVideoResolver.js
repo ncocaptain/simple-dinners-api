@@ -201,7 +201,7 @@ function runProcess(
 
       child.on(
         "close",
-        (exitCode) => {
+        (exitCode, signalCode) => {
           clearTimeout(timeout);
 
           if (timedOut) {
@@ -222,13 +222,19 @@ function runProcess(
             const error =
               createFacebookResolverError(
                 stderr.trim() ||
-                  `FFmpeg exited with code ${exitCode}.`,
+                  `FFmpeg exited with code ${exitCode}${
+                    signalCode
+                      ? ` after signal ${signalCode}`
+                      : ""
+                  }.`,
                 "FACEBOOK_VIDEO_FFMPEG_FAILED"
               );
 
             error.stderr = stderr;
             error.exitCode =
               exitCode;
+            error.signalCode =
+              signalCode || null;
 
             rejectOnce(error);
             return;
