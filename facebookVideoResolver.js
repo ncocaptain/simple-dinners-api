@@ -9,6 +9,15 @@ import {
 } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import {
+  createWriteStream,
+} from "node:fs";
+import {
+  Readable,
+} from "node:stream";
+import {
+  pipeline,
+} from "node:stream/promises";
 
 const DEFAULT_NAVIGATION_TIMEOUT_MS = 45_000;
 const DEFAULT_DISCOVERY_WAIT_MS = 3_000;
@@ -530,8 +539,6 @@ async function saveFacebookVideoToFile(
       DEFAULT_PROCESS_TIMEOUT_MS,
   } = {}
 ) {
-  requireFfmpegPath();
-
   if (
     !isAllowedFacebookMediaUrl(
       mediaUrl
@@ -550,59 +557,111 @@ async function saveFacebookVideoToFile(
     }
   );
 
-  const requestHeaders = [
-    `Referer: ${sourceUrl}`,
-  ];
+  const headers = {
+    "User-Agent": userAgent,
+    Referer: sourceUrl,
+  };
 
   if (cookieHeader) {
-    requestHeaders.push(
-      `Cookie: ${cookieHeader}`
-    );
+    headers.Cookie =
+      cookieHeader;
   }
 
-  const headerValue =
-    `${requestHeaders.join(
-      "\r\n"
-    )}\r\n`;
+  const controller =
+    new AbortController();
 
-  await runProcess(
-    requireFfmpegPath(),
-    [
-      "-y",
-      "-hide_banner",
-      "-loglevel",
-      "error",
+  const timeout =
+    setTimeout(() => {
+      controller.abort();
+    }, timeoutMs);
 
-      "-rw_timeout",
-      "30000000",
+  try {
+    const response =
+      await fetch(
+        mediaUrl,
+        {
+          method: "GET",
+          headers,
+          redirect: "follow",
+          signal:
+            controller.signal,
+        }
+      );
 
-      "-user_agent",
-      userAgent,
-
-      "-headers",
-      headerValue,
-
-      "-i",
-      mediaUrl,
-
-      "-map",
-      "0:v:0",
-
-      "-map",
-      "0:a:0?",
-
-      "-c",
-      "copy",
-
-      "-movflags",
-      "+faststart",
-
-      outputPath,
-    ],
-    {
-      timeoutMs,
+    if (!response.ok) {
+      throw createFacebookResolverError(
+        `Facebook video download returned HTTP ${response.status}.`,
+        "FACEBOOK_VIDEO_DOWNLOAD_FAILED"
+      );
     }
-  );
+
+    if (!response.body) {
+      throw createFacebookResolverError(
+        "Facebook video download returned an empty response.",
+        "FACEBOOK_VIDEO_DOWNLOAD_EMPTY"
+      );
+    }
+
+    if (
+      !isAllowedFacebookMediaUrl(
+        response.url
+      )
+    ) {
+      throw createFacebookResolverError(
+        "Facebook video download redirected to an unsupported host.",
+        "FACEBOOK_VIDEO_MEDIA_REDIRECT_BLOCKED"
+      );
+    }
+
+    await pipeline(
+      Readable.fromWeb(
+        response.body
+      ),
+      createWriteStream(
+        outputPath,
+        {
+          flags: "w",
+        }
+      )
+    );
+  } catch (error) {
+    await rm(
+      outputPath,
+      {
+        force: true,
+      }
+    );
+
+    if (
+      error?.code &&
+      String(error.code).startsWith(
+        "FACEBOOK_VIDEO_"
+      )
+    ) {
+      throw error;
+    }
+
+    if (
+      error?.name ===
+      "AbortError"
+    ) {
+      throw createFacebookResolverError(
+        `Facebook video download timed out after ${Math.round(
+          timeoutMs / 1000
+        )} seconds.`,
+        "FACEBOOK_VIDEO_DOWNLOAD_TIMEOUT"
+      );
+    }
+
+    throw createFacebookResolverError(
+      error instanceof Error
+        ? `Facebook video download failed: ${error.message}`
+        : "Facebook video download failed.",
+      "FACEBOOK_VIDEO_DOWNLOAD_FAILED"
+    );
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
 export function isSupportedFacebookVideoUrl(
