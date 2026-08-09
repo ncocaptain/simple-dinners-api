@@ -2977,14 +2977,29 @@ async function rescueFacebookVideoIfUseful(
         ""
       ).trim();
 
+    const visibleHasMeasurement =
+      /\b\d+(?:\s+\d+\/\d+|[./]\d+)?\s*(?:cups?|tbsp|tablespoons?|tsp|teaspoons?|oz|ounces?|lbs?|pounds?|grams?|kg|ml|liters?|minutes?|mins?|seconds?|hours?)\b/i.test(
+        visibleRecipeText
+      );
+
     const spokenHasMeasurement =
       /\b\d+(?:\s+\d+\/\d+|[./]\d+)?\s*(?:cups?|tbsp|tablespoons?|tsp|teaspoons?|oz|ounces?|lbs?|pounds?|grams?|kg|ml|liters?|minutes?|mins?|seconds?|hours?)\b/i.test(
         spokenRecipeText
       );
 
+    const visibleHasCookingAction =
+      /\b(?:add|mix|stir|cook|bake|fry|saute|sauté|season|heat|combine|place|pour|whisk|simmer|boil|grill|chop|slice|brown|melt|fold|spread|top|serve)\b/i.test(
+        visibleRecipeText
+      );
+
     const spokenHasCookingAction =
       /\b(?:add|mix|stir|cook|bake|fry|saute|sauté|season|heat|combine|place|pour|whisk|simmer|boil|grill|chop|slice|brown|melt|fold|spread|top|serve)\b/i.test(
         spokenRecipeText
+      );
+
+    const visibleHasRecipeSection =
+      /\b(?:ingredients?|instructions?|directions?|method|steps?)\s*:/i.test(
+        visibleRecipeText
       );
 
     const hasSubstantiveVideoEvidence =
@@ -2995,9 +3010,17 @@ async function rescueFacebookVideoIfUseful(
         true ||
         videoEvidence.instructionsAppearComplete ===
         true ||
-        visibleRecipeText.length >= 20 ||
+        visibleHasMeasurement ||
         spokenHasMeasurement ||
-        spokenHasCookingAction
+        visibleHasRecipeSection ||
+        (
+          visibleHasCookingAction &&
+          visibleRecipeText.length >= 20
+        ) ||
+        (
+          spokenHasCookingAction &&
+          spokenRecipeText.length >= 20
+        )
       );
 
     result.debug = {
