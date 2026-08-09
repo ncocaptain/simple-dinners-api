@@ -234,7 +234,20 @@ app.post("/resolve-pinterest", async (request, reply) => {
 // =====================================================
 
 app.post("/import-recipe", async (request, reply) => {
-  const { url, captionText, sharedText } = request.body || {};
+  const {
+    url,
+    captionText,
+    sharedText,
+    language,
+  } = request.body || {};
+
+  const importLanguage =
+    String(language || "en")
+      .trim()
+      .toLowerCase()
+      .slice(0, 2) === "es"
+      ? "es"
+      : "en";
 
   const userCaptionText =
     typeof captionText === "string" && captionText.trim()
@@ -405,6 +418,11 @@ app.post("/import-recipe", async (request, reply) => {
 
     firstResult = attachUserCaptionTextToResult(firstResult, userCaptionText);
     firstResult = await rescueSocialCaptionIfUseful(firstResult);
+    firstResult =
+      await rescueFacebookVideoIfUseful(
+        firstResult,
+        importLanguage
+      );
     firstResult = cleanSocialFallbackTitleIfNeeded(firstResult);
 
     console.log("Recipe result after caption rescue check:", {
@@ -413,6 +431,8 @@ app.post("/import-recipe", async (request, reply) => {
       ingredientsCount: firstResult?.ingredients?.length || 0,
       instructionsCount: firstResult?.instructions?.length || 0,
       socialCaptionRescue: firstResult?.debug?.socialCaptionRescue === true,
+      facebookVideoFallback:
+        firstResult?.debug?.facebookVideoFallback === true,
       socialFallbackTitleCleaned:
         firstResult?.debug?.socialFallbackTitleCleaned === true,
     });
@@ -2804,6 +2824,385 @@ async function rescueSocialCaptionIfUseful(result) {
     };
 
     return result;
+  }
+}
+
+async function rescueFacebookVideoIfUseful(
+  result,
+  language = "en"
+) {
+  if (!result?.success || !result?.recipe) {
+    return result;
+  }
+
+  const normalizedLanguage =
+    String(language || "en")
+      .trim()
+      .toLowerCase()
+      .slice(0, 2) === "es"
+      ? "es"
+      : "en";
+
+  const sourceUrl = String(
+    result.sourceUrl ||
+    result.importedFromUrl ||
+    result.recipe?.sourceUrl ||
+    ""
+  ).trim();
+
+  const socialCaptionParts =
+    resolveSocialCaptionParts({
+      rawName:
+        result.debug?.originalRecipeName ||
+        result.name ||
+        result.recipe?.name ||
+        "",
+      description:
+        result.debug?.description || "",
+      fallbackText:
+        result.recipe?.fallbackText || "",
+      sourceUrl,
+    });
+
+  const isFacebook =
+    socialCaptionParts.platform ===
+    "facebook";
+
+  const hasIngredients =
+    Array.isArray(result.ingredients) &&
+    result.ingredients.length > 0;
+
+  const hasInstructions =
+    Array.isArray(result.instructions) &&
+    result.instructions.length > 0;
+
+  const needsFallback =
+    isFacebook &&
+    (!hasIngredients ||
+      !hasInstructions);
+
+  result.debug = {
+    ...(result.debug || {}),
+    facebookVideoFallbackChecked: true,
+    facebookVideoFallbackNeeded:
+      needsFallback,
+  };
+
+  if (!needsFallback) {
+    result.debug.facebookVideoFallbackExitReason =
+      isFacebook
+        ? "result-already-complete"
+        : "not-facebook";
+
+    return result;
+  }
+
+  // Prefer a linked recipe page when Facebook
+  // already points to one.
+  if (result.linkedRecipeUrl) {
+    result.debug.facebookVideoFallbackExitReason =
+      "linked-recipe-available";
+
+    return result;
+  }
+
+  if (!openai) {
+    result.debug.facebookVideoFallbackExitReason =
+      "ai-unavailable";
+
+    return result;
+  }
+
+  let facebookWorkspace = null;
+  let preparedVideo = null;
+
+  try {
+    facebookWorkspace =
+      await createFacebookVideoResolverWorkspace();
+    result.debug.facebookVideoFallbackAttempted =
+      true;
+
+    const resolvedVideo =
+      await resolveFacebookVideoToFile(
+        sourceUrl,
+        {
+          workspaceDir:
+            facebookWorkspace,
+        }
+      );
+
+    preparedVideo =
+      await prepareVideoImportInputs(
+        resolvedVideo.outputPath,
+        {
+          openai,
+          language:
+            normalizedLanguage,
+          frameIntervalSeconds: 1,
+          maxFrames: 12,
+          frameWidth: 720,
+        }
+      );
+
+    const videoEvidence =
+      await analyzeVideoRecipeEvidence(
+        {
+          framePaths:
+            preparedVideo.framePaths,
+          transcriptText:
+            preparedVideo.transcriptText,
+        },
+        {
+          openai,
+          language:
+            normalizedLanguage,
+        }
+      );
+
+    const visibleRecipeText =
+      String(
+        videoEvidence.visibleRecipeText ||
+        ""
+      ).trim();
+
+    const spokenRecipeText =
+      String(
+        videoEvidence.spokenRecipeText ||
+        ""
+      ).trim();
+
+    const combinedVideoEvidence =
+      String(
+        videoEvidence.combinedRecipeText ||
+        ""
+      ).trim();
+
+    const spokenHasMeasurement =
+      /\b\d+(?:\s+\d+\/\d+|[./]\d+)?\s*(?:cups?|tbsp|tablespoons?|tsp|teaspoons?|oz|ounces?|lbs?|pounds?|grams?|kg|ml|liters?|minutes?|mins?|seconds?|hours?)\b/i.test(
+        spokenRecipeText
+      );
+
+    const spokenHasCookingAction =
+      /\b(?:add|mix|stir|cook|bake|fry|saute|sauté|season|heat|combine|place|pour|whisk|simmer|boil|grill|chop|slice|brown|melt|fold|spread|top|serve)\b/i.test(
+        spokenRecipeText
+      );
+
+    const hasSubstantiveVideoEvidence =
+      videoEvidence.hasRecipeContent ===
+      true &&
+      (
+        videoEvidence.ingredientsAppearComplete ===
+        true ||
+        videoEvidence.instructionsAppearComplete ===
+        true ||
+        visibleRecipeText.length >= 20 ||
+        spokenHasMeasurement ||
+        spokenHasCookingAction
+      );
+
+    result.debug = {
+      ...(result.debug || {}),
+      facebookVideoFallbackFrameCount:
+        preparedVideo.frameCount,
+      facebookVideoFallbackHasAudio:
+        preparedVideo.hasAudio,
+      facebookVideoFallbackTranscriptLength:
+        preparedVideo.transcriptText
+          .length,
+      facebookVideoFallbackHasRecipeContent:
+        videoEvidence.hasRecipeContent ===
+        true,
+      facebookVideoFallbackSubstantiveEvidence:
+        hasSubstantiveVideoEvidence,
+      facebookVideoFallbackIngredientsAppearComplete:
+        videoEvidence.ingredientsAppearComplete ===
+        true,
+      facebookVideoFallbackInstructionsAppearComplete:
+        videoEvidence.instructionsAppearComplete ===
+        true,
+      facebookVideoFallbackPossibleMissingContent:
+        videoEvidence.possibleMissingContent !==
+        false,
+      facebookVideoFallbackWarnings:
+        Array.isArray(
+          videoEvidence.warnings
+        )
+          ? videoEvidence.warnings
+          : [],
+    };
+
+    // A dish name or beauty shot alone is not
+    // enough evidence to ask the recipe parser
+    // to construct ingredients or instructions.
+    if (
+      !hasSubstantiveVideoEvidence ||
+      !combinedVideoEvidence
+    ) {
+      result.debug.facebookVideoFallbackExitReason =
+        "video-did-not-contain-actionable-recipe-evidence";
+
+      return result;
+    }
+
+    const captionEvidence =
+      buildCaptionRescueText(result);
+
+    const combinedEvidence = [
+      captionEvidence
+        ? `Facebook caption:\n${captionEvidence}`
+        : "",
+      `Facebook video evidence:\n${combinedVideoEvidence}`,
+    ]
+      .filter(Boolean)
+      .join("\n\n")
+      .trim();
+
+    const parsed =
+      await parseRecipeTextWithAI(
+        combinedEvidence
+      );
+
+    const rescuedIngredients =
+      Array.isArray(parsed.ingredients)
+        ? parsed.ingredients
+          .map(cleanHtmlEntities)
+          .map(cleanText)
+          .filter(Boolean)
+        : [];
+
+    const rescuedInstructions =
+      Array.isArray(parsed.instructions)
+        ? parsed.instructions
+          .map(cleanHtmlEntities)
+          .map(cleanText)
+          .filter(Boolean)
+        : [];
+
+    // Video evidence may improve a partial result,
+    // but we only promote to full when both sides
+    // of the recipe are actually recovered.
+    if (
+      rescuedIngredients.length === 0 ||
+      rescuedInstructions.length === 0
+    ) {
+      result.debug.facebookVideoFallbackExitReason =
+        "combined-evidence-still-incomplete";
+
+      result.debug.facebookVideoFallbackParsedIngredientsCount =
+        rescuedIngredients.length;
+
+      result.debug.facebookVideoFallbackParsedInstructionsCount =
+        rescuedInstructions.length;
+
+      return result;
+    }
+
+    const rescuedName =
+      cleanSocialRecipeTitle(
+        parsed.name ||
+        videoEvidence.title ||
+        result.name ||
+        "Facebook Recipe",
+        combinedEvidence,
+        sourceUrl
+      );
+
+    const rescuedRecipe = {
+      ...result.recipe,
+      name: rescuedName,
+      ingredients:
+        rescuedIngredients.join("\n"),
+      instructions:
+        rescuedInstructions.join("\n"),
+      photoUrl:
+        result.image ||
+        result.recipe?.photoUrl ||
+        resolvedVideo.imageUrl ||
+        "",
+      slug: `${slugify(
+        rescuedName
+      )}-${Date.now()
+        .toString()
+        .slice(-4)}`,
+      sourceUrl:
+        result.recipe?.sourceUrl ||
+        result.importedFromUrl ||
+        result.sourceUrl ||
+        sourceUrl,
+      effort: "normal",
+      importStatus: "full",
+      fallbackText: "",
+    };
+
+    return {
+      ...result,
+      success: true,
+      successLevel: "full",
+      debugVersion:
+        "simple-dinners-api-facebook-video-rescue-v1",
+      name: rescuedName,
+      ingredients:
+        rescuedIngredients,
+      instructions:
+        rescuedInstructions,
+      recipe: rescuedRecipe,
+      debug: {
+        ...(result.debug || {}),
+        facebookVideoFallback: true,
+        facebookVideoFallbackExitReason:
+          "full-recipe-recovered",
+        facebookVideoFallbackParsedIngredientsCount:
+          rescuedIngredients.length,
+        facebookVideoFallbackParsedInstructionsCount:
+          rescuedInstructions.length,
+      },
+      aiRescue: {
+        enabled: true,
+        type: "facebook-video",
+        note:
+          "Recipe details were recovered from Facebook caption and video evidence.",
+      },
+    };
+  } catch (error) {
+    console.log(
+      "Facebook video fallback unavailable:",
+      {
+        sourceUrl,
+        error:
+          error instanceof Error
+            ? error.message
+            : "Unknown Facebook video fallback error",
+      }
+    );
+
+    result.debug = {
+      ...(result.debug || {}),
+      facebookVideoFallbackAttempted:
+        true,
+      facebookVideoFallbackExitReason:
+        "video-fallback-error",
+      facebookVideoFallbackError:
+        error instanceof Error
+          ? error.message
+          : "Unknown Facebook video fallback error",
+    };
+
+    // Facebook video is a rescue layer only.
+    // Preserve the original honest partial import
+    // when media access or analysis fails.
+    return result;
+  } finally {
+    if (preparedVideo?.workspaceDir) {
+      await cleanupVideoImportWorkspace(
+        preparedVideo.workspaceDir
+      );
+    }
+
+    if (facebookWorkspace) {
+      await cleanupFacebookVideoResolverWorkspace(
+        facebookWorkspace
+      );
+    }
   }
 }
 
