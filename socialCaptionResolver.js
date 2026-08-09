@@ -240,7 +240,17 @@ function extractTitleCandidatesFromCaption(value) {
     .split(/ingredients?\s*[:~\-]|instructions?\s*[:~\-]|directions?\s*[:~\-]|method\s*[:~\-]|steps?\s*[:~\-]|macros?\s*[:~\-]|nutrition\s*[:~\-]|serving ideas/i)[0]
     .trim();
 
+  const explicitRecipeTitle =
+    cleanTitleCandidate(
+      (
+        beforeSections.match(
+          /(?:^|\|)\s*([^|\n\r]{4,80}?\brecipe)\b/i
+        ) || []
+      )[1] || ""
+    );
+
   const pieces = [
+    explicitRecipeTitle,
     beforeSections,
     ...beforeSections.split(/\n|\r|\||•|◆|✦|⭐|📝|👩‍🍳|🥩|🍚/),
   ];
