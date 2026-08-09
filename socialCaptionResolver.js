@@ -324,7 +324,13 @@ function isBadTitleCandidate(value, accountName = "") {
 
 const genericRecipeCategory = GENERIC_RECIPE_CATEGORY_RE.test(text);
 
+  const engagementOnly =
+    /^(?:[\d,.]+\s*[kmb]?\s+(?:views?|reactions?|likes?|comments?|shares?|plays?))(?:\s*[·•|,\-–—]\s*[\d,.]+\s*[kmb]?\s+(?:views?|reactions?|likes?|comments?|shares?|plays?))*$/i.test(
+      text
+    );
+
   return (
+  engagementOnly ||
   genericSocialTitle ||
   likelyAccountOnlyTitle ||
   startsWithMeasurement ||
