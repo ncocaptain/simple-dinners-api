@@ -300,11 +300,6 @@ export async function resolveInstagramCaption(
 
     await page.waitForTimeout(waitAfterLoadMs);
 
-    const navigationRequestHeaders =
-      navigationResponse
-        ? await navigationResponse.request().allHeaders()
-        : {};
-
     const pageEvidence =
       await page.evaluate(() => {
         const candidates = [];
@@ -479,32 +474,6 @@ export async function resolveInstagramCaption(
       chooseBestCaptionCandidate(
         candidates
       );
-
-    console.log("Instagram caption resolver diagnostic:", {
-      sourceUrl,
-      navigationStatus:
-        navigationResponse?.status() ?? null,
-      finalUrl: page.url(),
-      title: pageEvidence.title,
-      candidateCount: candidates.length,
-      bodyTextPreview:
-        pageEvidence.bodyTextPreview,
-      runtimePlatform: process.platform,
-      browserVersion: browser.version(),
-      browserUserAgent: await page.evaluate(() => navigator.userAgent),
-      browserPlatform: await page.evaluate(() => navigator.platform),
-      webdriver: await page.evaluate(() => navigator.webdriver),
-      requestUserAgent:
-        navigationRequestHeaders["user-agent"] || "",
-      requestSecChUa:
-        navigationRequestHeaders["sec-ch-ua"] || "",
-      requestSecChUaPlatform:
-        navigationRequestHeaders["sec-ch-ua-platform"] || "",
-      requestSecChUaMobile:
-        navigationRequestHeaders["sec-ch-ua-mobile"] || "",
-      requestAcceptLanguage:
-        navigationRequestHeaders["accept-language"] || "",
-    });
 
     return {
       success: Boolean(bestCandidate),
