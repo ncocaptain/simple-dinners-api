@@ -484,6 +484,11 @@ export async function resolveInstagramCaption(
       candidateCount: candidates.length,
       bodyTextPreview:
         pageEvidence.bodyTextPreview,
+      runtimePlatform: process.platform,
+      browserVersion: browser.version(),
+      browserUserAgent: await page.evaluate(() => navigator.userAgent),
+      browserPlatform: await page.evaluate(() => navigator.platform),
+      webdriver: await page.evaluate(() => navigator.webdriver),
     });
 
     return {
