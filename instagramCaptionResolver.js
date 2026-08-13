@@ -475,6 +475,17 @@ export async function resolveInstagramCaption(
         candidates
       );
 
+    console.log("Instagram caption resolver diagnostic:", {
+      sourceUrl,
+      navigationStatus:
+        navigationResponse?.status() ?? null,
+      finalUrl: page.url(),
+      title: pageEvidence.title,
+      candidateCount: candidates.length,
+      bodyTextPreview:
+        pageEvidence.bodyTextPreview,
+    });
+
     return {
       success: Boolean(bestCandidate),
       platform: "instagram",
