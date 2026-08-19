@@ -86,6 +86,27 @@ const VIDEO_FILE_EXTENSIONS = new Set([
 
 const MAX_VIDEO_FILE_BYTES = 75 * 1024 * 1024;
 
+// Playwright and social-video rescue can consume substantial memory.
+// Keep only one heavy import path active at a time while allowing
+// fast HTML-only imports to remain concurrent.
+let heavyImportTail = Promise.resolve();
+
+async function acquireHeavyImportSlot() {
+  let releaseSlot;
+
+  const previousTail =
+    heavyImportTail;
+
+  heavyImportTail =
+    new Promise((resolve) => {
+      releaseSlot = resolve;
+    });
+
+  await previousTail;
+
+  return releaseSlot;
+}
+
 const SCREENSHOT_MIME_TYPES = new Set([
   "image/jpeg",
   "image/png",
@@ -314,6 +335,16 @@ app.post("/import-recipe", async (request, reply) => {
 
   let browser;
   let context;
+  let releaseHeavyImportSlot = null;
+
+  async function ensureHeavyImportSlot() {
+    if (releaseHeavyImportSlot) {
+      return;
+    }
+
+    releaseHeavyImportSlot =
+      await acquireHeavyImportSlot();
+  }
 
   // -----------------------------------------------------
   // Playwright fallback setup
@@ -341,6 +372,28 @@ app.post("/import-recipe", async (request, reply) => {
     });
 
     return context;
+  }
+
+  async function closeBrowserContext() {
+    if (context) {
+      try {
+        await context.close();
+      } catch {
+        // Best-effort cleanup.
+      }
+
+      context = null;
+    }
+
+    if (browser) {
+      try {
+        await browser.close();
+      } catch {
+        // Best-effort cleanup.
+      }
+
+      browser = null;
+    }
   }
 
   async function runPlaywrightExtraction(targetUrl) {
@@ -401,6 +454,7 @@ app.post("/import-recipe", async (request, reply) => {
     // -----------------------------------------------------
 
     if (!shouldUseFastImportResult(firstResult)) {
+      await ensureHeavyImportSlot();
       firstResult = await runPlaywrightExtraction(importUrl);
     }
 
@@ -416,12 +470,18 @@ app.post("/import-recipe", async (request, reply) => {
       instructionsCount: firstResult?.instructions?.length || 0,
     });
 
+    // Release Playwright before entering heavier social/video rescue work.
+    // If a linked recipe later needs Playwright, ensureBrowserContext()
+    // will create a fresh browser/context.
+    await closeBrowserContext();
+
     firstResult = attachUserCaptionTextToResult(firstResult, userCaptionText);
     firstResult = await rescueSocialCaptionIfUseful(firstResult);
     firstResult =
       await rescueFacebookVideoIfUseful(
         firstResult,
-        importLanguage
+        importLanguage,
+        ensureHeavyImportSlot
       );
     firstResult = cleanSocialFallbackTitleIfNeeded(firstResult);
 
@@ -470,6 +530,7 @@ app.post("/import-recipe", async (request, reply) => {
       }
 
       if (!shouldUseFastImportResult(linkedResult)) {
+        await ensureHeavyImportSlot();
         linkedResult = await runPlaywrightExtraction(firstResult.linkedRecipeUrl);
       }
 
@@ -504,7 +565,14 @@ app.post("/import-recipe", async (request, reply) => {
       error: error instanceof Error ? error.message : "Import failed",
     });
   } finally {
-    if (browser) await browser.close();
+    try {
+      await closeBrowserContext();
+    } finally {
+      if (releaseHeavyImportSlot) {
+        releaseHeavyImportSlot();
+        releaseHeavyImportSlot = null;
+      }
+    }
   }
 });
 
@@ -2659,7 +2727,8 @@ async function rescueSocialCaptionIfUseful(result) {
 
 async function rescueFacebookVideoIfUseful(
   result,
-  language = "en"
+  language = "en",
+  ensureHeavyImportSlot = null
 ) {
   if (!result?.success || !result?.recipe) {
     return result;
@@ -2741,6 +2810,10 @@ async function rescueFacebookVideoIfUseful(
       "ai-unavailable";
 
     return result;
+  }
+
+  if (ensureHeavyImportSlot) {
+    await ensureHeavyImportSlot();
   }
 
   let facebookWorkspace = null;
@@ -2911,7 +2984,7 @@ async function rescueFacebookVideoIfUseful(
       .trim();
 
     const parsed =
-      await parseRecipeTextWithAI(
+      await parseFacebookVideoEvidenceWithAI(
         combinedEvidence
       );
 
@@ -2931,12 +3004,29 @@ async function rescueFacebookVideoIfUseful(
           .filter(Boolean)
         : [];
 
+    console.log("Facebook strict evidence parser result:", {
+      ingredients: rescuedIngredients,
+      instructions: rescuedInstructions,
+      ingredientsAppearComplete:
+        parsed.ingredientsAppearComplete === true,
+      instructionsAppearComplete:
+        parsed.instructionsAppearComplete === true,
+    });
+
     // Video evidence may improve a partial result,
     // but we only promote to full when both sides
-    // of the recipe are actually recovered.
+    // of the recipe are explicitly supported and complete.
+    const rescuedIngredientsAppearComplete =
+      parsed.ingredientsAppearComplete === true;
+
+    const rescuedInstructionsAppearComplete =
+      parsed.instructionsAppearComplete === true;
+
     if (
       rescuedIngredients.length === 0 ||
-      rescuedInstructions.length === 0
+      rescuedInstructions.length === 0 ||
+      !rescuedIngredientsAppearComplete ||
+      !rescuedInstructionsAppearComplete
     ) {
       result.debug.facebookVideoFallbackExitReason =
         "combined-evidence-still-incomplete";
@@ -2946,6 +3036,12 @@ async function rescueFacebookVideoIfUseful(
 
       result.debug.facebookVideoFallbackParsedInstructionsCount =
         rescuedInstructions.length;
+
+      result.debug.facebookVideoFallbackParsedIngredientsAppearComplete =
+        rescuedIngredientsAppearComplete;
+
+      result.debug.facebookVideoFallbackParsedInstructionsAppearComplete =
+        rescuedInstructionsAppearComplete;
 
       return result;
     }
@@ -4185,6 +4281,84 @@ function fixBrokenCommonWords(text) {
     .replace(/\bregano\b/gi, "oregano")
     .replace(/\s+/g, " ")
     .trim();
+}
+
+async function parseFacebookVideoEvidenceWithAI(text) {
+  const prompt = `
+Convert the supplied Facebook caption and video evidence into ONE structured recipe.
+
+This is an EVIDENCE-ONLY extraction task.
+It is NOT recipe completion.
+
+The supplied evidence may contain:
+
+- a Facebook caption
+- a recipe title or hashtags
+- spoken transcript evidence
+- text extracted from sampled video frames
+- incomplete or uncertain recipe details
+
+STRICT GROUNDING RULES:
+
+- Every ingredient must be directly and explicitly supported by the supplied evidence.
+- Every cooking instruction must be directly and explicitly supported by the supplied evidence.
+- Do not infer an ingredient from the recipe name, dish name, title, hashtag, or general cooking knowledge.
+- A title or hashtag such as "chicken noodle soup" does NOT prove that noodles are an ingredient unless noodles are separately stated in the evidence.
+- Do not infer ingredients merely because food appears visually unless the evidence explicitly identifies it.
+- Do not invent quantities, measurements, temperatures, times, ingredients, or cooking actions.
+- Do not repair unclear transcript wording by guessing what the speaker probably meant.
+- If a transcript phrase is too unclear to support a recipe fact, omit that fact.
+- Do not add helpful cooking steps that were not explicitly described.
+- Do not fill in missing steps from general cooking knowledge.
+- Preserve stated quantities, temperatures, and times exactly when possible.
+- Lightly clean wording only when doing so does not add new recipe information.
+- Keep cooking actions in the order supported by the evidence.
+
+NAME RULE:
+
+- The recipe name may come from an explicit caption, title, spoken title, or hashtag.
+- The recipe name is NEVER evidence for ingredients or instructions.
+
+COMPLETENESS RULES:
+
+- ingredientsAppearComplete is true only when the supplied evidence appears to contain the complete ingredient list.
+- instructionsAppearComplete is true only when the supplied evidence appears to contain the complete cooking method.
+- If either side appears partial, uncertain, or missing, mark that completeness field false.
+- It is better to return an incomplete recipe than to guess.
+
+Return valid JSON only:
+
+{
+  "name": "",
+  "ingredients": [],
+  "instructions": [],
+  "ingredientsAppearComplete": false,
+  "instructionsAppearComplete": false
+}
+
+Facebook evidence:
+${text}
+`;
+
+  const response = await openai.chat.completions.create({
+    model: process.env.OPENAI_MODEL || "gpt-5.5",
+    messages: [
+      {
+        role: "system",
+        content:
+          "You extract only explicitly supported recipe facts from Facebook cooking-video evidence. Never infer or complete missing recipe content. Return valid JSON only.",
+      },
+      {
+        role: "user",
+        content: prompt,
+      },
+    ],
+  });
+
+  const content =
+    response.choices?.[0]?.message?.content || "";
+
+  return JSON.parse(content);
 }
 
 async function parseRecipeTextWithAI(text) {
