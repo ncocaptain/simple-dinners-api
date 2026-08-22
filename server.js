@@ -1795,6 +1795,13 @@ async function fetchAndExtractRecipe(url) {
     },
   });
 
+  console.log("Fast HTML fetch response:", {
+    requestedUrl: url,
+    responseUrl: response.url || "",
+    status: response.status,
+    redirected: response.redirected,
+  });
+
   if (!response.ok) {
     return {
       success: false,
