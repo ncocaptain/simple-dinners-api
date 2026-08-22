@@ -441,6 +441,8 @@ app.post("/import-recipe", async (request, reply) => {
         name: firstResult?.name,
         ingredientsCount: firstResult?.ingredients?.length || 0,
         instructionsCount: firstResult?.instructions?.length || 0,
+        importedFromUrl: firstResult?.importedFromUrl || "",
+        finalUrl: firstResult?.debug?.finalUrl || "",
       });
     } catch (fetchError) {
       console.log("Fast HTML extraction failed:", {
