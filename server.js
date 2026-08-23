@@ -16,9 +16,6 @@ import {
   chooseSocialRecipeTitle,
 } from "./socialCaptionResolver.js";
 import {
-  resolveInstagramCaption,
-} from "./instagramCaptionResolver.js";
-import {
   analyzeVideoRecipeEvidence,
   cleanupVideoImportWorkspace,
   prepareVideoImportInputs,
@@ -441,8 +438,6 @@ app.post("/import-recipe", async (request, reply) => {
         name: firstResult?.name,
         ingredientsCount: firstResult?.ingredients?.length || 0,
         instructionsCount: firstResult?.instructions?.length || 0,
-        importedFromUrl: firstResult?.importedFromUrl || "",
-        finalUrl: firstResult?.debug?.finalUrl || "",
       });
     } catch (fetchError) {
       console.log("Fast HTML extraction failed:", {
@@ -481,11 +476,6 @@ app.post("/import-recipe", async (request, reply) => {
     await closeBrowserContext();
 
     firstResult = attachUserCaptionTextToResult(firstResult, userCaptionText);
-    firstResult =
-      await rescueInstagramCaptionEvidenceIfUseful(
-        firstResult,
-        importUrl
-      );
     firstResult = await rescueSocialCaptionIfUseful(firstResult);
     firstResult =
       await rescueFacebookVideoIfUseful(
@@ -1795,13 +1785,6 @@ async function fetchAndExtractRecipe(url) {
     },
   });
 
-  console.log("Fast HTML fetch response:", {
-    requestedUrl: url,
-    responseUrl: response.url || "",
-    status: response.status,
-    redirected: response.redirected,
-  });
-
   if (!response.ok) {
     return {
       success: false,
@@ -2397,82 +2380,6 @@ function attachUserCaptionTextToResult(result, captionText = "") {
 // Social caption rescue
 // Used when Instagram/social pages return caption text but no structured recipe
 // =====================================================
-
-async function rescueInstagramCaptionEvidenceIfUseful(result, sourceUrl) {
-  const needsRescue = resultNeedsCaptionRescue(result);
-  const userCaptionTextProvided =
-    result?.debug?.userCaptionTextProvided === true;
-
-  let isInstagramSource = false;
-
-  try {
-    const host = new URL(String(sourceUrl || "")).hostname
-      .toLowerCase()
-      .replace(/\.$/, "");
-
-    isInstagramSource =
-      host === "instagram.com" ||
-      host.endsWith(".instagram.com");
-  } catch {
-    isInstagramSource = false;
-  }
-
-  if (!needsRescue || !isInstagramSource || userCaptionTextProvided) {
-    return result;
-  }
-
-  try {
-    const captionResult = await resolveInstagramCaption(sourceUrl);
-
-    const captionText = String(
-      captionResult?.captionText || ""
-    ).trim();
-
-    if (!captionResult?.success || !captionText) {
-      result.debug = {
-        ...(result.debug || {}),
-        instagramCaptionRescueChecked: true,
-        instagramCaptionRescueSucceeded: false,
-      };
-
-      return result;
-    }
-
-    const imageUrl = String(
-      captionResult?.imageUrl || ""
-    ).trim();
-
-    result.image = result.image || imageUrl;
-
-    if (result.recipe && !result.recipe.photoUrl && imageUrl) {
-      result.recipe.photoUrl = imageUrl;
-    }
-
-    result.debug = {
-      ...(result.debug || {}),
-      description: captionText,
-      instagramCaptionRescueChecked: true,
-      instagramCaptionRescueSucceeded: true,
-      instagramCaptionSource:
-        captionResult.captionSource || "",
-      instagramCaptionLength: captionText.length,
-    };
-
-    return result;
-  } catch (error) {
-    result.debug = {
-      ...(result.debug || {}),
-      instagramCaptionRescueChecked: true,
-      instagramCaptionRescueSucceeded: false,
-      instagramCaptionRescueError:
-        error instanceof Error
-          ? error.message
-          : "Unknown Instagram caption rescue error",
-    };
-
-    return result;
-  }
-}
 
 function resultNeedsCaptionRescue(result) {
   if (!result?.success || !result?.recipe) return false;
