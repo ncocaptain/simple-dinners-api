@@ -32,6 +32,10 @@ import {
   resolveFacebookVideoToFile,
 } from "./facebookVideoResolver.js";
 
+import {
+  persistImportedRecipeImage,
+} from "./importedRecipeImageStore.js";
+
 
 // =====================================================
 // App setup
@@ -70,6 +74,58 @@ if (!openaiApiKey) {
 }
 
 const SOURCE_STEPS_PLACEHOLDER = "Steps available at source link!";
+
+// =====================================================
+// Durable imported recipe images
+// =====================================================
+
+async function finalizeImportedRecipeImage(result) {
+  if (!result || typeof result !== "object") {
+    return result;
+  }
+
+  const recipePhotoUrl = String(
+    result.recipe?.photoUrl ||
+    result.image ||
+    ""
+  ).trim();
+
+  if (!recipePhotoUrl) {
+    return result;
+  }
+
+  const sourcePageUrl = String(
+    result.recipe?.sourceUrl ||
+    result.importedFromUrl ||
+    result.sourceUrl ||
+    ""
+  ).trim();
+
+  const durablePhotoUrl =
+    await persistImportedRecipeImage(
+      recipePhotoUrl,
+      {
+        sourcePageUrl,
+      }
+    );
+
+  if (!durablePhotoUrl) {
+    return result;
+  }
+
+  return {
+    ...result,
+    ...(result.image !== undefined
+      ? { image: durablePhotoUrl }
+      : {}),
+    recipe: result.recipe
+      ? {
+        ...result.recipe,
+        photoUrl: durablePhotoUrl,
+      }
+      : result.recipe,
+  };
+}
 const VIDEO_MIME_TYPES = new Set([
   "video/mp4",
   "video/quicktime",
@@ -552,10 +608,20 @@ app.post("/import-recipe", async (request, reply) => {
         },
       };
 
-      return await applyAiCleanupToResult(finalResult);
+      const cleanedFinalResult =
+        await applyAiCleanupToResult(finalResult);
+
+      return await finalizeImportedRecipeImage(
+        cleanedFinalResult
+      );
     }
 
-    return await applyAiCleanupToResult(firstResult);
+    const cleanedFirstResult =
+      await applyAiCleanupToResult(firstResult);
+
+    return await finalizeImportedRecipeImage(
+      cleanedFirstResult
+    );
   } catch (error) {
     request.log.error(error);
 
@@ -737,23 +803,34 @@ app.post("/import-video-url", async (request, reply) => {
         applyAiCleanupToResult,
       });
 
+    const finalizedResult =
+      await finalizeImportedRecipeImage(
+        result
+      );
+
     console.log(
       "Public video recipe import complete:",
       {
         sourceUrl,
         platform,
         successLevel:
-          result.successLevel,
+          finalizedResult.successLevel,
         recipeName:
-          result.recipe?.name || "",
+          finalizedResult.recipe?.name || "",
         ingredientCount:
-          result.ingredients?.length || 0,
+          finalizedResult.ingredients?.length || 0,
         instructionCount:
-          result.instructions?.length || 0,
+          finalizedResult.instructions?.length || 0,
+        durableImage:
+          Boolean(
+            finalizedResult.recipe?.photoUrl &&
+            finalizedResult.recipe.photoUrl !==
+              result.recipe?.photoUrl
+          ),
       }
     );
 
-    return reply.send(result);
+    return reply.send(finalizedResult);
   } catch (error) {
     request.log.error(error);
 
