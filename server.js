@@ -3609,22 +3609,38 @@ async function applyAiCleanupToResult(result) {
   );
 
   // -----------------------------------------------------
-  // Speed rule:
-  // Skip AI only for small, complete imports that already mention enough ingredients.
-  // This keeps simple recipes fast while still cleaning vague instructions.
+  // Speed / fidelity rule:
+  // - Skip AI for small, complete imports that are already useful.
+  // - Also preserve complete recipes recovered from visible article
+  //   sections when their instructions already pass the usefulness check.
+  //   Those ingredients and steps came directly from the source page and
+  //   should not be rewritten just because the recipe is larger.
   // -----------------------------------------------------
 
-  const shouldSkipAiCleanup =
+  const visibleRecipeFallbackAlreadyUseful =
+    result.successLevel === "full" &&
+    result.debug?.visibleRecipeFallbackUsed === true &&
+    instructionsAlreadyUseful;
+
+  const simpleFullImportAlreadyUseful =
     result.successLevel === "full" &&
     ingredientCount <= 12 &&
     instructionCount <= 8 &&
     instructionsAlreadyUseful;
 
+  const shouldSkipAiCleanup =
+    visibleRecipeFallbackAlreadyUseful ||
+    simpleFullImportAlreadyUseful;
+
   if (shouldSkipAiCleanup) {
+    const skipReason = visibleRecipeFallbackAlreadyUseful
+      ? "visible-recipe-full-import"
+      : "simple-full-import";
+
     result.aiCleanup = {
       enabled: false,
       skipped: true,
-      reason: "simple-full-import",
+      reason: skipReason,
       ingredientsCount: ingredientCount,
       instructionsCount: instructionCount,
       instructionsAlreadyUseful,
@@ -3633,11 +3649,12 @@ async function applyAiCleanupToResult(result) {
     result.debug = {
       ...(result.debug || {}),
       aiCleanupSkipped: true,
+      aiCleanupSkipReason: skipReason,
       instructionsAlreadyUseful,
     };
 
     console.log("AI cleanup skipped:", {
-      reason: "simple-full-import",
+      reason: skipReason,
       ingredientsCount: ingredientCount,
       instructionsCount: instructionCount,
       instructionsAlreadyUseful,
