@@ -2198,6 +2198,240 @@ function extractRecipeFromJsonLd(jsonLdText, sourceUrl) {
   };
 }
 
+function normalizeVisibleRecipeHeading(value) {
+  return cleanText(String(value || ""))
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/^[^A-Za-z0-9]+/, "")
+    .trim()
+    .toLowerCase();
+}
+
+function isVisibleIngredientsHeading(value) {
+  return /^(ingredients?|ingredientes?)\b/.test(
+    normalizeVisibleRecipeHeading(value)
+  );
+}
+
+function isVisibleInstructionsHeading(value) {
+  return /^(instructions?|directions?|method|steps?|how\s+to\s+make|instrucciones?|indicaciones?|metodo|pasos?|como\s+hacer)\b/.test(
+    normalizeVisibleRecipeHeading(value)
+  );
+}
+
+function isVisibleRecipeStopHeading(value) {
+  return /^(faq|frequently\s+asked\s+questions?|tips?|notes?|nutrition|final\s+thoughts?|related|comments?|preguntas\s+frecuentes|consejos?|notas?|nutricion|pensamientos\s+finales)\b/.test(
+    normalizeVisibleRecipeHeading(value)
+  );
+}
+
+function extractVisibleRecipeBlockLines($, el) {
+  const block = $(el).clone();
+
+  const listItems = block.is("ul,ol")
+    ? block.children("li")
+    : block.find("li");
+
+  if (listItems.length > 0) {
+    const lines = [];
+
+    listItems.each((_, li) => {
+      const item = $(li).clone();
+      item.find("br").replaceWith("\n");
+
+      item
+        .text()
+        .replace(/\r/g, "\n")
+        .split("\n")
+        .map((line) => cleanHtmlEntities(cleanText(line)))
+        .filter(Boolean)
+        .forEach((line) => lines.push(line));
+    });
+
+    return lines;
+  }
+
+  block.find("br").replaceWith("\n");
+
+  return block
+    .text()
+    .replace(/\r/g, "\n")
+    .split("\n")
+    .map((line) => cleanHtmlEntities(cleanText(line)))
+    .filter(Boolean);
+}
+
+function extractVisibleRecipeSections($) {
+  const containerSelectors = [
+    ".entry-content",
+    ".post-content",
+    ".article-content",
+    ".article-body",
+    ".post-body",
+    "[itemprop='articleBody']",
+    "article",
+    "main",
+  ];
+
+  const seen = new Set();
+
+  for (const selector of containerSelectors) {
+    const containers = $(selector).toArray();
+
+    for (const container of containers) {
+      if (seen.has(container)) continue;
+      seen.add(container);
+
+      const blocks = $(container)
+        .find("p,h2,h3,h4,h5,h6,ul,ol")
+        .toArray();
+
+      if (blocks.length === 0) continue;
+
+      const ingredientHeaderIndex = blocks.findIndex((block) => {
+        const lines = extractVisibleRecipeBlockLines($, block);
+        return lines.length > 0 && isVisibleIngredientsHeading(lines[0]);
+      });
+
+      if (ingredientHeaderIndex < 0) continue;
+
+      const instructionHeaderIndex = blocks.findIndex((block, index) => {
+        if (index <= ingredientHeaderIndex) return false;
+
+        const lines = extractVisibleRecipeBlockLines($, block);
+        return lines.length > 0 && isVisibleInstructionsHeading(lines[0]);
+      });
+
+      if (instructionHeaderIndex < 0) continue;
+
+      const ingredients = [];
+      const bulletPattern = /^[\u2022\u25cf\u25aa\u25e6*-]\s*/;
+
+      for (
+        let index = ingredientHeaderIndex + 1;
+        index < instructionHeaderIndex;
+        index += 1
+      ) {
+        const block = blocks[index];
+        let lines = extractVisibleRecipeBlockLines($, block);
+
+        if (lines.length === 0) continue;
+
+        const laterLineHasBullet =
+          lines.length > 1 &&
+          lines.slice(1).some((line) => bulletPattern.test(line));
+
+        const firstLineNormalized =
+          normalizeVisibleRecipeHeading(lines[0] || "");
+
+        const blockIsOptional =
+          /^optional\b/.test(firstLineNormalized);
+
+        if (laterLineHasBullet && !bulletPattern.test(lines[0])) {
+          lines = lines.slice(1);
+        }
+
+        for (const line of lines) {
+          const hadBullet = bulletPattern.test(line);
+          const cleaned = line.replace(bulletPattern, "").trim();
+
+          if (!cleaned) continue;
+
+          const normalized = normalizeVisibleRecipeHeading(cleaned);
+          const wordCount = cleaned.split(/\s+/).length;
+
+          const looksLikeSubsectionHeading =
+            !hadBullet &&
+            wordCount <= 8 &&
+            /^(for\b|optional\b|filling\b|coating\b|sauce\b|garnish\b|topping\b|dressing\b|marinade\b)/.test(
+              normalized
+            );
+
+          if (looksLikeSubsectionHeading) continue;
+
+          const ingredient =
+            blockIsOptional && !/\boptional\b/i.test(cleaned)
+              ? `${cleaned} (optional)`
+              : cleaned;
+
+          ingredients.push(ingredient);
+        }
+      }
+
+      const instructions = [];
+
+      for (
+        let index = instructionHeaderIndex + 1;
+        index < blocks.length;
+        index += 1
+      ) {
+        const block = blocks[index];
+        const lines = extractVisibleRecipeBlockLines($, block);
+
+        if (lines.length === 0) continue;
+
+        if (isVisibleRecipeStopHeading(lines[0])) {
+          break;
+        }
+
+        const isListBlock = $(block).is("ul,ol");
+
+        if (isListBlock) {
+          for (const line of lines) {
+            const cleaned = line
+              .replace(
+                /^\s*(?:step\s*)?\d+(?:\uFE0F?\u20E3)?\s*[\).:-]?\s*/i,
+                ""
+              )
+              .trim();
+
+            if (cleaned) {
+              instructions.push(cleaned);
+            }
+          }
+
+          continue;
+        }
+
+        const firstLine = lines[0]
+          .replace(
+            /^\s*(?:step\s*)?\d+(?:\uFE0F?\u20E3)?\s*[\).:-]?\s*/i,
+            ""
+          )
+          .trim();
+
+        const remainingText = lines.slice(1).join(" ").trim();
+
+        let instruction = firstLine;
+
+        if (remainingText) {
+          instruction = firstLine
+            ? `${firstLine}${/[.!?]$/.test(firstLine) ? " " : ": "}${remainingText}`
+            : remainingText;
+        }
+
+        if (instruction) {
+          instructions.push(instruction);
+        }
+      }
+
+      if (ingredients.length >= 2 && instructions.length >= 2) {
+        return {
+          ingredients,
+          instructions,
+          containerSelector: selector,
+        };
+      }
+    }
+  }
+
+  return {
+    ingredients: [],
+    instructions: [],
+    containerSelector: "",
+  };
+}
+
 function extractRecipeFromPage($, sourceUrl, finalUrl) {
   if (isBlockedPage($, finalUrl)) {
     const pageTitle = cleanHtmlEntities(cleanText($("title").text()));
@@ -2307,6 +2541,30 @@ function extractRecipeFromPage($, sourceUrl, finalUrl) {
     }
   }
 
+  let visibleRecipeFallback = null;
+
+  if (
+    (ingredients.length === 0 || instructions.length === 0) &&
+    !isSocialRecipeUrl(finalUrl) &&
+    !isSocialRecipeUrl(sourceUrl)
+  ) {
+    visibleRecipeFallback = extractVisibleRecipeSections($);
+
+    if (
+      ingredients.length === 0 &&
+      visibleRecipeFallback.ingredients.length > 0
+    ) {
+      ingredients = visibleRecipeFallback.ingredients;
+    }
+
+    if (
+      instructions.length === 0 &&
+      visibleRecipeFallback.instructions.length > 0
+    ) {
+      instructions = visibleRecipeFallback.instructions;
+    }
+  }
+
   ingredients = ingredients.map(cleanHtmlEntities).map(cleanText).filter(Boolean);
   instructions = instructions.map(cleanHtmlEntities).map(cleanText).filter(Boolean);
 
@@ -2386,6 +2644,16 @@ function extractRecipeFromPage($, sourceUrl, finalUrl) {
       description,
       isSocialSource,
       originalRecipeName: isSocialSource ? originalRecipeName : undefined,
+      visibleRecipeFallbackUsed:
+        !!visibleRecipeFallback &&
+        (visibleRecipeFallback.ingredients.length > 0 ||
+          visibleRecipeFallback.instructions.length > 0),
+      visibleRecipeFallbackContainer:
+        visibleRecipeFallback?.containerSelector || "",
+      visibleRecipeFallbackIngredientsCount:
+        visibleRecipeFallback?.ingredients?.length || 0,
+      visibleRecipeFallbackInstructionsCount:
+        visibleRecipeFallback?.instructions?.length || 0,
       socialCaptionParts: socialCaptionParts
         ? {
           platform: socialCaptionParts.platform,
