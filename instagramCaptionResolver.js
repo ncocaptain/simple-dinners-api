@@ -479,6 +479,7 @@ export async function resolveInstagramCaption(
       success: Boolean(bestCandidate),
       platform: "instagram",
       sourceUrl,
+      finalUrl: page.url(),
       navigationStatus:
         navigationResponse?.status() ??
         null,

@@ -933,6 +933,41 @@ app.post("/import-video-url", async (request, reply) => {
         "OPENAI_API_KEY is not configured.";
     }
 
+    if (platform === "instagram") {
+      const instagramCaption =
+        error?.details?.instagramCaption || {};
+      const resolvedPublicVideo =
+        error?.details?.resolvedPublicVideo || {};
+
+      console.log(
+        "Instagram public video import failed:",
+        {
+          sourceUrl,
+          errorCode,
+          captionFound:
+            instagramCaption.found === true,
+          captionSource:
+            instagramCaption.source || "",
+          captionSourceUrl:
+            instagramCaption.sourceUrl || "",
+          captionFinalUrl:
+            instagramCaption.finalUrl || "",
+          captionNavigationStatus:
+            instagramCaption.navigationStatus ?? null,
+          captionHasImage:
+            Boolean(instagramCaption.imageUrl),
+          captionCandidateCount:
+            Number(instagramCaption.candidateCount || 0),
+          captionError:
+            instagramCaption.error || "",
+          videoAvailable:
+            resolvedPublicVideo.available === true,
+          videoError:
+            resolvedPublicVideo.error || "",
+        }
+      );
+    }
+
     const debugVersion =
       platform === "tiktok"
         ? "simple-dinners-api-public-tiktok-import-v1"

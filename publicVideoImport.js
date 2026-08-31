@@ -171,6 +171,17 @@ function buildInstagramCaptionMetadata(
 
     source:
       captionResult?.captionSource || "",
+    sourceUrl:
+      String(
+        captionResult?.sourceUrl || ""
+      ).trim(),
+    finalUrl:
+      String(
+        captionResult?.finalUrl || ""
+      ).trim(),
+    navigationStatus:
+      captionResult?.navigationStatus ??
+      null,
 
     score:
       Number(
