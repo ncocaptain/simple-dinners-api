@@ -306,6 +306,96 @@ app.post("/resolve-pinterest", async (request, reply) => {
 });
 
 // =====================================================
+// Device-assisted Instagram image fallback
+// Only accepts Instagram CDN images for Instagram sources.
+// =====================================================
+
+function getTrustedInstagramDevicePhotoUrl(
+  sourceUrl,
+  photoUrl
+) {
+  try {
+    const source = new URL(String(sourceUrl || ""));
+    const sourceHost = source.hostname.toLowerCase();
+
+    const isInstagramSource =
+      sourceHost === "instagram.com" ||
+      sourceHost.endsWith(".instagram.com");
+
+    if (!isInstagramSource) {
+      return "";
+    }
+
+    const photo = new URL(String(photoUrl || "").trim());
+    const photoHost = photo.hostname.toLowerCase();
+
+    const isTrustedInstagramCdn =
+      photo.protocol === "https:" &&
+      (
+        photoHost === "cdninstagram.com" ||
+        photoHost.endsWith(".cdninstagram.com")
+      );
+
+    return isTrustedInstagramCdn
+      ? photo.toString()
+      : "";
+  } catch {
+    return "";
+  }
+}
+
+function attachInstagramDevicePhotoIfUseful(
+  result,
+  {
+    sourceUrl = "",
+    photoUrl = "",
+  } = {}
+) {
+  if (
+    !result ||
+    typeof result !== "object" ||
+    !result.recipe
+  ) {
+    return result;
+  }
+
+  const existingPhotoUrl = String(
+    result.recipe?.photoUrl ||
+    result.image ||
+    ""
+  ).trim();
+
+  if (existingPhotoUrl) {
+    return result;
+  }
+
+  const trustedPhotoUrl =
+    getTrustedInstagramDevicePhotoUrl(
+      sourceUrl,
+      photoUrl
+    );
+
+  if (!trustedPhotoUrl) {
+    return result;
+  }
+
+  return {
+    ...result,
+    ...(Object.prototype.hasOwnProperty.call(result, "image")
+      ? { image: trustedPhotoUrl }
+      : {}),
+    recipe: {
+      ...result.recipe,
+      photoUrl: trustedPhotoUrl,
+    },
+    debug: {
+      ...(result.debug || {}),
+      instagramDevicePhotoApplied: true,
+    },
+  };
+}
+
+// =====================================================
 // POST /import-recipe
 // Main recipe import endpoint
 // =====================================================
@@ -316,7 +406,13 @@ app.post("/import-recipe", async (request, reply) => {
     captionText,
     sharedText,
     language,
+    photoUrl,
   } = request.body || {};
+
+  const devicePhotoUrl =
+    typeof photoUrl === "string"
+      ? photoUrl.trim()
+      : "";
 
   const importLanguage =
     String(language || "en")
@@ -611,16 +707,34 @@ app.post("/import-recipe", async (request, reply) => {
       const cleanedFinalResult =
         await applyAiCleanupToResult(finalResult);
 
+      const finalResultWithDevicePhoto =
+        attachInstagramDevicePhotoIfUseful(
+          cleanedFinalResult,
+          {
+            sourceUrl: importUrl,
+            photoUrl: devicePhotoUrl,
+          }
+        );
+
       return await finalizeImportedRecipeImage(
-        cleanedFinalResult
+        finalResultWithDevicePhoto
       );
     }
 
     const cleanedFirstResult =
       await applyAiCleanupToResult(firstResult);
 
+    const firstResultWithDevicePhoto =
+      attachInstagramDevicePhotoIfUseful(
+        cleanedFirstResult,
+        {
+          sourceUrl: importUrl,
+          photoUrl: devicePhotoUrl,
+        }
+      );
+
     return await finalizeImportedRecipeImage(
-      cleanedFirstResult
+      firstResultWithDevicePhoto
     );
   } catch (error) {
     request.log.error(error);
