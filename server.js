@@ -2468,6 +2468,26 @@ function extractVisibleRecipeSections($) {
 }
 
 function extractRecipeFromPage($, sourceUrl, finalUrl) {
+  let canonicalImportedUrl = finalUrl;
+
+  try {
+    const parsedFinalUrl = new URL(String(finalUrl || ""));
+    const finalHost = parsedFinalUrl.hostname.toLowerCase();
+    const isInstagramLoginRedirect =
+      (finalHost === "instagram.com" ||
+        finalHost.endsWith(".instagram.com")) &&
+      parsedFinalUrl.pathname.startsWith("/accounts/login");
+
+    if (isInstagramLoginRedirect) {
+      canonicalImportedUrl =
+        normalizeImportUrl(finalUrl) ||
+        normalizeImportUrl(sourceUrl) ||
+        sourceUrl ||
+        finalUrl;
+    }
+  } catch {
+    // Keep the original final URL if it cannot be parsed.
+  }
   if (isBlockedPage($, finalUrl)) {
     const pageTitle = cleanHtmlEntities(cleanText($("title").text()));
 
@@ -2476,7 +2496,7 @@ function extractRecipeFromPage($, sourceUrl, finalUrl) {
       successLevel: "blocked",
       debugVersion: "simple-dinners-api-importer-v1",
       sourceUrl,
-      importedFromUrl: finalUrl,
+      importedFromUrl: canonicalImportedUrl,
       name: "",
       ingredients: [],
       instructions: [],
@@ -2624,7 +2644,7 @@ function extractRecipeFromPage($, sourceUrl, finalUrl) {
     ? resolveSocialCaptionParts({
       rawName: originalRecipeName,
       description,
-      sourceUrl: finalUrl,
+      sourceUrl: canonicalImportedUrl,
     })
     : null;
 
@@ -2649,7 +2669,7 @@ function extractRecipeFromPage($, sourceUrl, finalUrl) {
     successLevel,
     debugVersion: "simple-dinners-api-importer-v1",
     sourceUrl,
-    importedFromUrl: finalUrl,
+    importedFromUrl: canonicalImportedUrl,
     name: recipeName,
     ingredients,
     instructions,
@@ -2663,11 +2683,11 @@ function extractRecipeFromPage($, sourceUrl, finalUrl) {
         : SOURCE_STEPS_PLACEHOLDER,
       photoUrl: image,
       slug: `${slugify(recipeName)}-${Date.now().toString().slice(-4)}`,
-      sourceUrl: finalUrl,
+      sourceUrl: canonicalImportedUrl,
       effort: "normal",
       importStatus: successLevel,
       fallbackText: !hasIngredients && !hasInstructions
-        ? [recipeName, description, finalUrl].filter(Boolean).join("\n\n")
+        ? [recipeName, description, canonicalImportedUrl].filter(Boolean).join("\n\n")
         : "",
     },
     debug: {
