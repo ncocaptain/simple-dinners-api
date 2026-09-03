@@ -35,6 +35,10 @@ import {
 import {
   persistImportedRecipeImage,
 } from "./importedRecipeImageStore.js";
+import {
+  analyzeRecipeNutrition,
+  getNutritionCacheStats,
+} from "./nutrition.js";
 
 
 // =====================================================
@@ -207,6 +211,119 @@ function parseJsonResponse(value) {
     );
   }
 }
+
+// =====================================================
+// POST /nutrition
+//
+// Parse recipe ingredient measurements with OpenAI,
+// then calculate estimated nutrition from USDA
+// FoodData Central values.
+// =====================================================
+
+app.post("/nutrition", async (request, reply) => {
+  const body =
+    request.body && typeof request.body === "object"
+      ? request.body
+      : {};
+
+  const recipeName =
+    String(body.recipeName || "").trim();
+
+  const ingredients =
+    Array.isArray(body.ingredients)
+      ? body.ingredients
+          .map((item) => String(item || "").trim())
+          .filter(Boolean)
+          .join("\n")
+      : String(body.ingredients || "").trim();
+
+  const servings =
+    Number(body.servings);
+
+  if (!ingredients) {
+    return reply.code(400).send({
+      success: false,
+      successLevel: "invalid-request",
+      error: "Recipe ingredients are required.",
+    });
+  }
+
+  if (ingredients.length > 20000) {
+    return reply.code(400).send({
+      success: false,
+      successLevel: "invalid-request",
+      error: "Recipe ingredients are too long.",
+    });
+  }
+
+  if (
+    !Number.isFinite(servings) ||
+    servings <= 0 ||
+    servings > 100
+  ) {
+    return reply.code(400).send({
+      success: false,
+      successLevel: "invalid-request",
+      error: "Recipe servings must be between 1 and 100.",
+    });
+  }
+
+  if (!openai) {
+    return reply.code(503).send({
+      success: false,
+      successLevel: "ai-unavailable",
+      error:
+        "Nutrition ingredient parsing is temporarily unavailable.",
+    });
+  }
+
+  if (!process.env.USDA_FDC_API_KEY) {
+    return reply.code(503).send({
+      success: false,
+      successLevel: "usda-unavailable",
+      error:
+        "USDA FoodData Central is not configured.",
+    });
+  }
+
+  try {
+    const nutrition =
+      await analyzeRecipeNutrition({
+        openai,
+        model:
+          process.env.OPENAI_MODEL ||
+          "gpt-5.5",
+        recipeName,
+        ingredients,
+        servings,
+      });
+
+    return reply.send({
+      success: true,
+      successLevel:
+        nutrition.coverage >= 0.7
+          ? "nutrition-estimate"
+          : "nutrition-partial",
+      debugVersion:
+        "simple-dinners-api-nutrition-v1",
+      premiumFeatureKey: "nutrition",
+      premiumEnforced: false,
+      nutrition,
+      cache: getNutritionCacheStats(),
+    });
+  } catch (error) {
+    request.log.error(error);
+
+    return reply.code(500).send({
+      success: false,
+      successLevel: "nutrition-error",
+      error:
+        error instanceof Error
+          ? error.message
+          : "Nutrition analysis failed.",
+    });
+  }
+});
 
 // =====================================================
 // POST /interpret-smart-week-request
