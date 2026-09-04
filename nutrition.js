@@ -1269,6 +1269,8 @@ function candidateContextAdjustment(
     "keto",
     "imitation",
     "substitute",
+    "glutinous",
+    "added solution",
   ];
 
   for (const term of variantTerms) {
@@ -1286,6 +1288,43 @@ function candidateContextAdjustment(
     "casserole",
     "pilaf",
     "bake",
+
+    // Do not let a basic ingredient silently become a
+    // materially different prepared food or product.
+    //
+    // Examples:
+    // rice    -> rice noodles / beans and rice
+    // chicken -> chicken sausage / bratwurst
+    // potato  -> potato patty
+    // sauce   -> ravioli with sauce
+    // chicken breast -> fried/coated chicken
+    "noodle",
+    "steak",
+    "sausage",
+    "bratwurst",
+    "patty",
+    "ravioli",
+    "beans",
+    "fried",
+    "breaded",
+    "coated",
+    "pancake",
+    "giblet",
+    "capon",
+    "flour",
+    "wing",
+    "thigh",
+    "drumstick",
+    "leg",
+    "breast",
+    "gizzard",
+    "liver",
+    "heart",
+    "neck",
+    "back",
+    "ground",
+    "crumble",
+    "crumbles",
   ];
 
   for (const term of preparedDishTerms) {
@@ -1364,6 +1403,18 @@ function candidateContextAdjustment(
     adjustment -= 120;
   }
 
+  const candidateUsesAddedOil =
+    description.includes("made with oil") ||
+    description.includes("cooked with oil") ||
+    description.includes("with added oil");
+
+  if (
+    candidateUsesAddedOil &&
+    !ingredientText.includes("oil")
+  ) {
+    adjustment -= 140;
+  }
+
   const wantsOilPacked =
     ingredientText.includes("oil packed") ||
     ingredientText.includes("packed in oil");
@@ -1390,6 +1441,13 @@ const FOOD_IDENTITY_IGNORED_TOKENS =
     "skinless",
     "dry",
     "raw",
+    "cooked",
+    "chilled",
+    "peeled",
+    "quartered",
+    "divided",
+    "beaten",
+    "thawed",
     "drained",
     "chopped",
     "minced",
@@ -1408,6 +1466,7 @@ const FOOD_IDENTITY_IGNORED_TOKENS =
     "optional",
     "to",
     "taste",
+    "and",
     "nfs",
   ]);
 
@@ -1517,6 +1576,33 @@ function foodIdentityCompatibility(
     normalizeText(
       candidate?.description,
     );
+
+  const parsedFood =
+    normalizeText(
+      ingredient?.food,
+    );
+
+  // In ordinary recipe wording, a plain "pepper" ingredient
+  // means black pepper. USDA search results can otherwise
+  // include jalapenos, bell peppers, or prepared pepper foods
+  // because they share the token "pepper".
+  if (parsedFood === "pepper") {
+    const isBlackPepper =
+      candidateDescription.includes(
+        "pepper",
+      ) &&
+      candidateDescription.includes(
+        "black",
+      );
+
+    if (!isBlackPepper) {
+      return {
+        compatible: false,
+        overlap,
+        required,
+      };
+    }
+  }
 
   // Broth / stock is a semantic requirement, not just a
   // shared word. A USDA record such as "chicken, canned,
@@ -2464,6 +2550,17 @@ function ingredientSearchQuery(
   ) {
     food =
       "distilled vinegar";
+    normalizedFood =
+      normalizeText(food);
+  }
+
+  // In ordinary recipe wording, an unspecified "pepper"
+  // means black pepper. Searching USDA for plain "pepper"
+  // otherwise favors compound foods such as pepper steak.
+  if (
+    normalizedFood === "pepper"
+  ) {
+    food = "black pepper";
     normalizedFood =
       normalizeText(food);
   }
