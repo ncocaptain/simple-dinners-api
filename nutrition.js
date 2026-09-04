@@ -345,16 +345,69 @@ function portionMatchScore(
     portionUnitTerms(
       ingredientUnit,
     );
-
   if (!terms.length) {
     return 0;
   }
 
   const text =
     buildPortionText(portion);
-
   if (!text) {
     return 0;
+  }
+
+  const directPortionFields = [
+    portion?.measureUnit?.name,
+    portion?.measureUnit
+      ?.abbreviation,
+    portion?.modifier,
+    portion?.portionDescription,
+  ]
+    .filter(Boolean)
+    .map((value) =>
+      normalizeText(value),
+    );
+
+  // Prefer an exact USDA portion field such as
+  // modifier: "large" over a different portion that merely
+  // mentions the word, such as "cup (4.86 large eggs)".
+  for (const term of terms) {
+    const normalizedTerm =
+      normalizeText(term);
+
+    if (
+      normalizedTerm &&
+      directPortionFields.includes(
+        normalizedTerm,
+      )
+    ) {
+      return 125;
+    }
+  }
+
+  // Prefer a portion field that begins with the requested
+  // size/unit over one that merely mentions it later.
+  //
+  // Example:
+  // "medium (2-1/2\" dia)" should outrank
+  // "slice, medium (1/8\" thick)" for "1 medium onion".
+  for (const term of terms) {
+    const normalizedTerm =
+      normalizeText(term);
+
+    if (
+      normalizedTerm &&
+      directPortionFields.some(
+        (field) =>
+          field.startsWith(
+            `${normalizedTerm} `,
+          ) ||
+          field.startsWith(
+            `${normalizedTerm},`,
+          ),
+      )
+    ) {
+      return 115;
+    }
   }
 
   const normalizedText =
@@ -363,7 +416,6 @@ function portionMatchScore(
   for (const term of terms) {
     const normalizedTerm =
       normalizeText(term);
-
     if (
       normalizedTerm &&
       normalizedText.includes(
@@ -377,7 +429,6 @@ function portionMatchScore(
   for (const term of terms) {
     const normalizedTerm =
       normalizeText(term);
-
     if (
       normalizedTerm &&
       text.includes(
@@ -433,7 +484,7 @@ function portionContextAdjustment(
       ingredientText.startsWith("dry ") ||
       ingredientText.includes(" uncooked ")
     ) &&
-    portionText.includes("cooked")
+    /\bcooked\b/.test(portionText)
   ) {
     adjustment -= 100;
   }
@@ -444,7 +495,7 @@ function portionContextAdjustment(
       ingredientText.startsWith("fresh ") ||
       ingredientText.includes(" raw ")
     ) &&
-    portionText.includes("cooked")
+    /\bcooked\b/.test(portionText)
   ) {
     adjustment -= 100;
   }
@@ -1197,7 +1248,7 @@ function candidateContextAdjustment(
     if (
       description.includes("sweet") ||
       description.includes("bell") ||
-      description.includes("cooked") ||
+      /\bcooked\b/.test(description) ||
       description.includes("sauteed") ||
       description.includes("raw")
     ) {
@@ -1217,6 +1268,7 @@ function candidateContextAdjustment(
     "low carb",
     "keto",
     "imitation",
+    "substitute",
   ];
 
   for (const term of variantTerms) {
@@ -1286,7 +1338,7 @@ function candidateContextAdjustment(
     }
 
     if (
-      description.includes("cooked") ||
+      /\bcooked\b/.test(description) ||
       description.includes("frozen") ||
       description.includes("canned")
     ) {
@@ -1307,7 +1359,7 @@ function candidateContextAdjustment(
 
   if (
     wantsDry &&
-    description.includes("cooked")
+    /\bcooked\b/.test(description)
   ) {
     adjustment -= 120;
   }
@@ -1356,6 +1408,7 @@ const FOOD_IDENTITY_IGNORED_TOKENS =
     "optional",
     "to",
     "taste",
+    "nfs",
   ]);
 
 function normalizeIdentityToken(
@@ -1582,10 +1635,87 @@ function candidateScore(
 
   if (
     description &&
-    food &&
-    description.includes(food)
+    food
   ) {
-    score += 20;
+    const requestedIdentityTokens =
+      foodIdentityTokens(food);
+
+    const candidateIdentityTokens =
+      foodIdentityTokens(
+        description,
+      );
+
+    const requestedIdentitySet =
+      new Set(
+        requestedIdentityTokens,
+      );
+
+    const candidateIdentitySet =
+      new Set(
+        candidateIdentityTokens,
+      );
+
+    const exactIdentityTokenSet =
+      requestedIdentitySet.size > 0 &&
+      requestedIdentitySet.size ===
+        candidateIdentitySet.size &&
+      Array.from(
+        requestedIdentitySet,
+      ).every(
+        (token) =>
+          candidateIdentitySet.has(
+            token,
+          ),
+      );
+
+    const isSimpleFood =
+      requestedIdentityTokens.length === 1;
+
+    const requestedToken =
+      requestedIdentityTokens[0] || "";
+
+    const candidateStartsWithFood =
+      isSimpleFood &&
+      candidateIdentityTokens[0] ===
+        requestedToken;
+
+    const candidateContainsFoodToken =
+      isSimpleFood &&
+      candidateIdentityTokens.includes(
+        requestedToken,
+      );
+
+    // A basic ingredient such as "egg", "butter", or "salt"
+    // should strongly prefer the actual food over a compound
+    // product that merely contains the same word.
+    //
+    // Examples:
+    // egg    -> "Egg, whole, raw, fresh"
+    //          not "Bagels, egg"
+    // butter -> "Butter, salted"
+    //          not "Fruit butter"
+    if (description === food) {
+      score += 260;
+    } else if (exactIdentityTokenSet) {
+      // USDA often reverses ordinary food-word order.
+      // "ground beef" and "Beef, ground" describe the
+      // same core food, while "Spanish rice with ground
+      // beef" contains additional identity tokens.
+      score += 180;
+    } else if (candidateStartsWithFood) {
+      score += 180;
+    } else if (
+      description.includes(food)
+    ) {
+      score += 20;
+    }
+
+    if (
+      candidateContainsFoodToken &&
+      !candidateStartsWithFood
+    ) {
+      score -= 220;
+    }
   }
 
   const brand =
@@ -2338,9 +2468,30 @@ function ingredientSearchQuery(
       normalizeText(food);
   }
 
+  const originalIngredient =
+    normalizeText(
+      ingredient?.original,
+    );
+
+  // A plain egg search currently returns stale Foundation
+  // records followed by prepared egg dishes. For a basic
+  // whole-egg ingredient, ask USDA for the raw whole food
+  // instead. The actual portion weight still comes entirely
+  // from USDA foodPortions.
+  if (
+    normalizedFood === "egg" &&
+    !/\b(boiled|poached|fried|scrambled|omelet|pickled)\b/.test(
+      originalIngredient,
+    )
+  ) {
+    food = "egg whole raw";
+    normalizedFood =
+      normalizeText(food);
+  }
+
   if (
     normalizedFood.includes("fresh") &&
-    !normalizedFood.includes("cooked")
+    !/\bcooked\b/.test(normalizedFood)
   ) {
     food = food
       .replace(/\bfresh\b/gi, " ")
