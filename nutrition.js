@@ -798,6 +798,220 @@ function portionToGrams(
     : null;
 }
 
+// Some ordinary countable ingredients arrive from the parser
+// with a quantity but no useful unit:
+//
+//   2 eggs
+//   2 green onions
+//   4 chicken breasts
+//
+// USDA often has an exact count portion for these foods. Keep
+// this intentionally strict so text such as
+// "cup (4.86 large eggs)" cannot masquerade as one egg.
+function countPortionTerms(
+  ingredient,
+) {
+  const unit =
+    normalizeUnit(
+      ingredient?.unit,
+    );
+
+  const text =
+    normalizeText(
+      [
+        ingredient?.unit,
+        ingredient?.food,
+        ingredient?.original,
+      ]
+        .filter(Boolean)
+        .join(" "),
+    );
+
+  if (
+    (
+      !unit ||
+      unit === "egg"
+    ) &&
+    /\beggs?\b/.test(text)
+  ) {
+    return ["egg"];
+  }
+
+  if (
+    (
+      !unit ||
+      unit === "onion"
+    ) &&
+    (
+      /\bgreen onions?\b/.test(
+        text,
+      ) ||
+      /\bscallions?\b/.test(
+        text,
+      )
+    )
+  ) {
+    return ["whole"];
+  }
+
+  if (
+    unit === "breast" ||
+    /\bchicken breasts?\b/.test(
+      text,
+    )
+  ) {
+    return [
+      "breast",
+      "piece",
+    ];
+  }
+
+  return [];
+}
+
+function strictCountPortionScore(
+  portion,
+  terms,
+) {
+  if (!terms.length) {
+    return 0;
+  }
+
+  const directFields = [
+    portion?.measureUnit?.name,
+    portion?.measureUnit
+      ?.abbreviation,
+    portion?.modifier,
+    portion?.portionDescription,
+  ]
+    .filter(Boolean)
+    .map((value) =>
+      normalizeText(value),
+    );
+
+  for (const term of terms) {
+    const normalizedTerm =
+      normalizeText(term);
+
+    if (
+      normalizedTerm &&
+      directFields.includes(
+        normalizedTerm,
+      )
+    ) {
+      return 125;
+    }
+  }
+
+  for (const term of terms) {
+    const normalizedTerm =
+      normalizeText(term);
+
+    if (
+      normalizedTerm &&
+      directFields.includes(
+        `1 ${normalizedTerm}`,
+      )
+    ) {
+      return 120;
+    }
+  }
+
+  return 0;
+}
+
+function countPortionToGrams(
+  food,
+  ingredient,
+) {
+  const quantity =
+    Number(
+      ingredient?.quantity,
+    );
+
+  if (
+    !Number.isFinite(quantity) ||
+    quantity <= 0
+  ) {
+    return null;
+  }
+
+  const terms =
+    countPortionTerms(
+      ingredient,
+    );
+
+  if (!terms.length) {
+    return null;
+  }
+
+  const portions =
+    Array.isArray(
+      food?.foodPortions,
+    )
+      ? food.foodPortions
+      : [];
+
+  let best = null;
+
+  for (const portion of portions) {
+    const gramWeight =
+      Number(
+        portion?.gramWeight,
+      );
+
+    const portionAmount =
+      Number(
+        portion?.amount || 1,
+      );
+
+    if (
+      !Number.isFinite(
+        gramWeight,
+      ) ||
+      gramWeight <= 0 ||
+      !Number.isFinite(
+        portionAmount,
+      ) ||
+      portionAmount <= 0
+    ) {
+      continue;
+    }
+
+    const score =
+      strictCountPortionScore(
+        portion,
+        terms,
+      );
+
+    if (
+      score > 0 &&
+      (
+        !best ||
+        score > best.score
+      )
+    ) {
+      best = {
+        score,
+        gramWeight,
+        portionAmount,
+      };
+    }
+  }
+
+  if (!best) {
+    return null;
+  }
+
+  return (
+    quantity *
+    (
+      best.gramWeight /
+      best.portionAmount
+    )
+  );
+}
+
 function parseHouseholdNumber(
   value,
 ) {
@@ -1172,6 +1386,21 @@ function ingredientToGrams(
     return {
       grams: portionGrams,
       method: "usda-portion",
+    };
+  }
+
+  const countPortionGrams =
+    countPortionToGrams(
+      food,
+      ingredient,
+    );
+
+  if (countPortionGrams) {
+    return {
+      grams:
+        countPortionGrams,
+      method:
+        "usda-count-portion",
     };
   }
 
@@ -1613,6 +1842,35 @@ function foodIdentityCompatibility(
       );
 
     if (!isBlackPepper) {
+      return {
+        compatible: false,
+        overlap,
+        required,
+      };
+    }
+  }
+
+  // An unspecified recipe "egg" means the ordinary chicken
+  // egg. Do not silently substitute eggs from another species.
+  // Standard USDA chicken-egg records often simply say "Egg"
+  // without explicitly including the word "chicken".
+  if (parsedFood === "egg") {
+    const otherEggSpecies = [
+      "duck",
+      "goose",
+      "quail",
+      "turkey",
+      "guinea",
+    ];
+
+    if (
+      otherEggSpecies.some(
+        (species) =>
+          candidateDescription.includes(
+            species,
+          ),
+      )
+    ) {
       return {
         compatible: false,
         overlap,
