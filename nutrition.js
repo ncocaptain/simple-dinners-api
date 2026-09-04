@@ -384,6 +384,23 @@ function portionMatchScore(
     }
   }
 
+  // Prefer an exact household description such as
+  // "1 cup" over a different portion that merely contains
+  // the same unit, such as "1 cup ice".
+  for (const term of terms) {
+    const normalizedTerm =
+      normalizeText(term);
+
+    if (
+      normalizedTerm &&
+      directPortionFields.includes(
+        `1 ${normalizedTerm}`,
+      )
+    ) {
+      return 120;
+    }
+  }
+
   // Prefer a portion field that begins with the requested
   // size/unit over one that merely mentions it later.
   //
