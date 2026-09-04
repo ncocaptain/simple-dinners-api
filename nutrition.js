@@ -2868,6 +2868,8 @@ async function resolveIngredient({
       if (
         !gramResult ||
         ![
+          "direct-weight",
+          "package-weight",
           "usda-branded-household",
           "usda-branded-count",
         ].includes(
