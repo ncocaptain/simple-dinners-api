@@ -3392,17 +3392,31 @@ async function resolveIngredient({
         .join(" "),
     );
 
-  const isWholeBellPepper =
+  const hasBellPepperCount =
     /\bbell peppers?\b/.test(
       bellPepperText,
     ) &&
-    !bellPepperUnit &&
     Number.isFinite(
       Number(ingredient?.quantity),
     ) &&
     Number(ingredient?.quantity) > 0;
 
-  if (isWholeBellPepper) {
+  const isWholeBellPepper =
+    hasBellPepperCount &&
+    !bellPepperUnit;
+
+  const isSizedBellPepper =
+    hasBellPepperCount &&
+    [
+      "small",
+      "medium",
+      "large",
+    ].includes(bellPepperUnit);
+
+  if (
+    isWholeBellPepper ||
+    isSizedBellPepper
+  ) {
     let fallbackQuery =
       "peppers sweet green raw";
 
@@ -3438,8 +3452,11 @@ async function resolveIngredient({
             "",
           ),
       original:
-        `${ingredient.quantity || ""} bell pepper`
-          .trim(),
+        isSizedBellPepper
+          ? `${ingredient.quantity || ""} ${bellPepperUnit} bell pepper`
+              .trim()
+          : `${ingredient.quantity || ""} bell pepper`
+              .trim(),
     };
 
     const fallbackFoods =
