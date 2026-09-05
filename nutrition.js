@@ -2320,6 +2320,136 @@ function rankFoodCandidates(
     );
 }
 
+const USDA_REQUEST_INTERVAL_MS =
+  Math.max(
+    0,
+    Number(
+      process.env
+        .USDA_REQUEST_INTERVAL_MS || 0,
+    ) || 0,
+  );
+
+const USDA_MAX_RETRIES =
+  Math.max(
+    0,
+    Number(
+      process.env
+        .USDA_MAX_RETRIES || 5,
+    ) || 5,
+  );
+
+let lastUsdaRequestAt = 0;
+
+function sleep(ms) {
+  return new Promise(
+    (resolve) =>
+      setTimeout(resolve, ms),
+  );
+}
+
+async function waitForUsdaPacing() {
+  if (
+    USDA_REQUEST_INTERVAL_MS <= 0
+  ) {
+    return;
+  }
+
+  const now = Date.now();
+
+  const waitMs =
+    Math.max(
+      0,
+      USDA_REQUEST_INTERVAL_MS -
+        (now - lastUsdaRequestAt),
+    );
+
+  if (waitMs > 0) {
+    await sleep(waitMs);
+  }
+
+  lastUsdaRequestAt = Date.now();
+}
+
+function retryAfterMs(response) {
+  const value =
+    response.headers.get(
+      "retry-after",
+    );
+
+  if (!value) {
+    return null;
+  }
+
+  const seconds =
+    Number(value);
+
+  if (
+    Number.isFinite(seconds) &&
+    seconds >= 0
+  ) {
+    return seconds * 1000;
+  }
+
+  const date =
+    Date.parse(value);
+
+  if (
+    Number.isFinite(date)
+  ) {
+    return Math.max(
+      0,
+      date - Date.now(),
+    );
+  }
+
+  return null;
+}
+
+async function fetchUsda(
+  url,
+  options,
+) {
+  let attempt = 0;
+
+  while (true) {
+    await waitForUsdaPacing();
+
+    const response =
+      await fetch(
+        url,
+        options,
+      );
+
+    if (
+      response.status !== 429 &&
+      response.status < 500
+    ) {
+      return response;
+    }
+
+    if (
+      attempt >= USDA_MAX_RETRIES
+    ) {
+      return response;
+    }
+
+    const headerDelay =
+      retryAfterMs(response);
+
+    const backoff =
+      headerDelay ??
+      Math.min(
+        30000,
+        1000 *
+          2 ** attempt,
+      );
+
+    await sleep(backoff);
+
+    attempt += 1;
+  }
+}
+
 async function searchUsdaFood(
   query,
   apiKey,
@@ -2372,19 +2502,22 @@ async function searchUsdaFood(
         ];
 
   const response =
-    await fetch(url, {
-      method: "POST",
-      headers: {
-        "Content-Type":
-          "application/json",
+    await fetchUsda(
+      url,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type":
+            "application/json",
+        },
+        body: JSON.stringify({
+          query:
+            normalizedQuery,
+          pageSize: 25,
+          dataType,
+        }),
       },
-      body: JSON.stringify({
-        query:
-          normalizedQuery,
-        pageSize: 25,
-        dataType,
-      }),
-    });
+    );
 
   if (!response.ok) {
     throw new Error(
@@ -2442,21 +2575,24 @@ async function searchUsdaBrandedFood(
   );
 
   const response =
-    await fetch(url, {
-      method: "POST",
-      headers: {
-        "Content-Type":
-          "application/json",
+    await fetchUsda(
+      url,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type":
+            "application/json",
+        },
+        body: JSON.stringify({
+          query:
+            normalizedQuery,
+          pageSize: 30,
+          dataType: [
+            "Branded",
+          ],
+        }),
       },
-      body: JSON.stringify({
-        query:
-          normalizedQuery,
-        pageSize: 30,
-        dataType: [
-          "Branded",
-        ],
-      }),
-    });
+    );
 
   if (!response.ok) {
     throw new Error(
@@ -2505,7 +2641,9 @@ async function fetchUsdaFood(
   );
 
   const response =
-    await fetch(url);
+    await fetchUsda(
+      url,
+    );
 
   if (!response.ok) {
     throw new Error(
