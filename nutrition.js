@@ -3141,6 +3141,144 @@ async function resolveIngredient({
     };
   }
 
+  // Color-specific USDA onion records can be nutritionally
+  // appropriate but lack small/medium/large household
+  // portions. If a sized bulb onion cannot convert above,
+  // fall back to USDA's generic raw onion record, which has
+  // real size-specific portion weights.
+  const onionUnit =
+    normalizeUnit(
+      ingredient?.unit,
+    );
+
+  const onionText =
+    normalizeText(
+      [
+        ingredient?.food,
+        ingredient?.original,
+      ]
+        .filter(Boolean)
+        .join(" "),
+    );
+
+  const isSizedBulbOnion =
+    [
+      "small",
+      "medium",
+      "large",
+    ].includes(onionUnit) &&
+    /\bonions?\b/.test(
+      onionText,
+    ) &&
+    !/\bgreen onions?\b/.test(
+      onionText,
+    ) &&
+    !/\bscallions?\b/.test(
+      onionText,
+    ) &&
+    !/\bspring onions?\b/.test(
+      onionText,
+    );
+
+  if (isSizedBulbOnion) {
+    const fallbackIngredient = {
+      ...ingredient,
+      food: "onion",
+      original:
+        `${ingredient.quantity || ""} ${onionUnit} onion`
+          .trim(),
+    };
+
+    const fallbackFoods =
+      await searchUsdaFood(
+        "onions raw",
+        apiKey,
+        fallbackIngredient,
+      );
+
+    const fallbackRanked =
+      rankFoodCandidates(
+        fallbackFoods,
+        fallbackIngredient,
+      ).slice(0, 6);
+
+    for (
+      const selected
+      of fallbackRanked
+    ) {
+      if (!selected?.food?.fdcId) {
+        continue;
+      }
+
+      let food;
+
+      try {
+        food =
+          await fetchUsdaFood(
+            selected.food.fdcId,
+            apiKey,
+          );
+      } catch (error) {
+        const message =
+          error instanceof Error
+            ? error.message
+            : "";
+
+        if (
+          message.includes("(404)")
+        ) {
+          continue;
+        }
+
+        throw error;
+      }
+
+      const gramResult =
+        ingredientToGrams(
+          food,
+          fallbackIngredient,
+        );
+
+      if (!gramResult) {
+        continue;
+      }
+
+      const per100g =
+        nutrientsPer100g(food);
+
+      const nutrients =
+        scaleNutrients(
+          per100g,
+          gramResult.grams,
+        );
+
+      return {
+        status: "resolved",
+        ingredient,
+        grams:
+          Math.round(
+            gramResult.grams * 10,
+          ) / 10,
+        conversionMethod:
+          gramResult.method,
+        match: {
+          fdcId:
+            selected.food.fdcId,
+          description:
+            selected.food.description,
+          dataType:
+            selected.food.dataType,
+          score:
+            selected.score,
+        },
+        nutrients:
+          roundNutrition(
+            nutrients,
+          ),
+      };
+    }
+  }
+
   let brandedCandidatesToTry = [];
 
   if (
