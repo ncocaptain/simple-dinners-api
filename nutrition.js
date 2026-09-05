@@ -3015,14 +3015,24 @@ function dedupeParsedIngredients(
 function shouldExcludeFromCoverage(
   ingredient,
 ) {
+  const quantity =
+    Number(
+      ingredient?.quantity,
+    );
+
+  const hasUsableQuantity =
+    Number.isFinite(quantity) &&
+    quantity > 0;
+
   return (
-    ingredient?.toTaste === true ||
+    (
+      ingredient?.toTaste === true &&
+      !hasUsableQuantity
+    ) ||
     ingredient?.garnishOnly === true ||
     (
       ingredient?.optional === true &&
-      !Number.isFinite(
-        Number(ingredient?.quantity),
-      )
+      !hasUsableQuantity
     )
   );
 }
