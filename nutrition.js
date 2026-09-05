@@ -854,6 +854,62 @@ function countPortionTerms(
     return ["whole"];
   }
 
+  // Whole bulb onions can use USDA's exact Onion or
+  // "1 whole" portions. Keep green onions on their separate
+  // count path above.
+  if (
+    !unit &&
+    /\bonions?\b/.test(text) &&
+    !/\bgreen onions?\b/.test(text) &&
+    !/\bscallions?\b/.test(text) &&
+    !/\bspring onions?\b/.test(text)
+  ) {
+    return [
+      "onion",
+      "whole",
+    ];
+  }
+
+  // USDA FNDDS has a real "1 whole" portion for summer /
+  // yellow squash.
+  if (
+    !unit &&
+    (
+      /\byellow squash\b/.test(
+        text,
+      ) ||
+      /\bsummer squash\b/.test(
+        text,
+      )
+    )
+  ) {
+    return ["whole"];
+  }
+
+  // USDA has both "pepper" and "1 whole" portions for
+  // jalapenos.
+  if (
+    !unit &&
+    /\bjalapenos?\b/.test(text)
+  ) {
+    return [
+      "pepper",
+      "whole",
+    ];
+  }
+
+  // FNDDS describes one ordinary whole bell pepper as
+  // "1 regular". Use that only when the recipe gives a count
+  // without a size such as small/medium/large.
+  if (
+    !unit &&
+    /\bbell peppers?\b/.test(
+      text,
+    )
+  ) {
+    return ["regular"];
+  }
+
   if (
     unit === "breast" ||
     /\bchicken breasts?\b/.test(
@@ -3171,12 +3227,7 @@ async function resolveIngredient({
         .join(" "),
     );
 
-  const isSizedBulbOnion =
-    [
-      "small",
-      "medium",
-      "large",
-    ].includes(onionUnit) &&
+  const isBulbOnion =
     /\bonions?\b/.test(
       onionText,
     ) &&
@@ -3190,13 +3241,35 @@ async function resolveIngredient({
       onionText,
     );
 
-  if (isSizedBulbOnion) {
+  const isSizedBulbOnion =
+    isBulbOnion &&
+    [
+      "small",
+      "medium",
+      "large",
+    ].includes(onionUnit);
+
+  const isWholeBulbOnion =
+    isBulbOnion &&
+    !onionUnit &&
+    Number.isFinite(
+      Number(ingredient?.quantity),
+    ) &&
+    Number(ingredient?.quantity) > 0;
+
+  if (
+    isSizedBulbOnion ||
+    isWholeBulbOnion
+  ) {
     const fallbackIngredient = {
       ...ingredient,
       food: "onion",
       original:
-        `${ingredient.quantity || ""} ${onionUnit} onion`
-          .trim(),
+        isSizedBulbOnion
+          ? `${ingredient.quantity || ""} ${onionUnit} onion`
+              .trim()
+          : `${ingredient.quantity || ""} onion`
+              .trim(),
     };
 
     const fallbackFoods =
@@ -3206,11 +3279,181 @@ async function resolveIngredient({
         fallbackIngredient,
       );
 
+    // This fallback is intentionally generic. Do not let
+    // ranking substitute a different onion color (for example,
+    // white onion -> red onion) simply because that record has
+    // a convenient whole/size portion.
     const fallbackRanked =
       rankFoodCandidates(
         fallbackFoods,
         fallbackIngredient,
-      ).slice(0, 6);
+      )
+        .filter(
+          selected =>
+            normalizeText(
+              selected?.food?.description,
+            ) === "onions raw",
+        )
+        .slice(0, 6);
+
+    for (
+      const selected
+      of fallbackRanked
+    ) {
+      if (!selected?.food?.fdcId) {
+        continue;
+      }
+
+      let food;
+
+      try {
+        food =
+          await fetchUsdaFood(
+            selected.food.fdcId,
+            apiKey,
+          );
+      } catch (error) {
+        const message =
+          error instanceof Error
+            ? error.message
+            : "";
+
+        if (
+          message.includes("(404)")
+        ) {
+          continue;
+        }
+
+        throw error;
+      }
+
+      const gramResult =
+        ingredientToGrams(
+          food,
+          fallbackIngredient,
+        );
+
+      if (!gramResult) {
+        continue;
+      }
+
+      const per100g =
+        nutrientsPer100g(food);
+
+      const nutrients =
+        scaleNutrients(
+          per100g,
+          gramResult.grams,
+        );
+
+      return {
+        status: "resolved",
+        ingredient,
+        grams:
+          Math.round(
+            gramResult.grams * 10,
+          ) / 10,
+        conversionMethod:
+          gramResult.method,
+        match: {
+          fdcId:
+            selected.food.fdcId,
+          description:
+            selected.food.description,
+          dataType:
+            selected.food.dataType,
+          score:
+            selected.score,
+        },
+        nutrients:
+          roundNutrition(
+            nutrients,
+          ),
+      };
+    }
+  }
+
+  // Color-specific bell-pepper Foundation records often
+  // have nutrient data but no usable whole-pepper portion.
+  // Fall back to USDA's generic sweet-pepper records when the
+  // recipe specifies a whole pepper count.
+  const bellPepperUnit =
+    normalizeUnit(
+      ingredient?.unit,
+    );
+
+  const bellPepperText =
+    normalizeText(
+      [
+        ingredient?.food,
+        ingredient?.original,
+      ]
+        .filter(Boolean)
+        .join(" "),
+    );
+
+  const isWholeBellPepper =
+    /\bbell peppers?\b/.test(
+      bellPepperText,
+    ) &&
+    !bellPepperUnit &&
+    Number.isFinite(
+      Number(ingredient?.quantity),
+    ) &&
+    Number(ingredient?.quantity) > 0;
+
+  if (isWholeBellPepper) {
+    let fallbackQuery =
+      "peppers sweet green raw";
+
+    if (
+      /\bred bell peppers?\b/.test(
+        bellPepperText,
+      )
+    ) {
+      fallbackQuery =
+        "peppers sweet red raw";
+    } else if (
+      /\byellow bell peppers?\b/.test(
+        bellPepperText,
+      )
+    ) {
+      fallbackQuery =
+        "peppers sweet yellow raw";
+    } else if (
+      /\borange bell peppers?\b/.test(
+        bellPepperText,
+      )
+    ) {
+      fallbackQuery =
+        "peppers sweet orange raw";
+    }
+
+    const fallbackIngredient = {
+      ...ingredient,
+      food:
+        fallbackQuery
+          .replace(
+            /^peppers\s+/,
+            "",
+          ),
+      original:
+        `${ingredient.quantity || ""} bell pepper`
+          .trim(),
+    };
+
+    const fallbackFoods =
+      await searchUsdaFood(
+        fallbackQuery,
+        apiKey,
+        fallbackIngredient,
+      );
+
+    const fallbackRanked =
+      rankFoodCandidates(
+        fallbackFoods,
+        fallbackIngredient,
+      ).slice(0, 8);
 
     for (
       const selected
