@@ -184,6 +184,53 @@ function normalizeUnit(value) {
     normalized;
 }
 
+function directMassQuantity(
+  value,
+) {
+  const direct = Number(value);
+
+  if (
+    Number.isFinite(direct) &&
+    direct > 0
+  ) {
+    return direct;
+  }
+
+  const text =
+    String(value ?? "")
+      .trim();
+
+  const range =
+    text.match(
+      /^(\d+(?:\.\d+)?)\s*(?:to|-|–|—)\s*(\d+(?:\.\d+)?)$/i,
+    );
+
+  if (!range) {
+    return null;
+  }
+
+  const lower =
+    Number(range[1]);
+
+  const upper =
+    Number(range[2]);
+
+  if (
+    !Number.isFinite(lower) ||
+    !Number.isFinite(upper) ||
+    lower <= 0 ||
+    upper <= 0 ||
+    upper < lower
+  ) {
+    return null;
+  }
+
+  // For an explicit recipe range, use the stated minimum
+  // rather than inventing an average. This is intentionally
+  // limited to direct mass conversion.
+  return lower;
+}
+
 function directMassToGrams(
   quantity,
   unit,
@@ -1434,7 +1481,9 @@ function ingredientToGrams(
 
   const directGrams =
     directMassToGrams(
-      Number(ingredient.quantity),
+      directMassQuantity(
+        ingredient.quantity,
+      ),
       ingredient.unit,
     );
 
