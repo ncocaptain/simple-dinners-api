@@ -266,15 +266,52 @@ function directMassToGrams(
   }
 }
 
+function explicitEachMass(
+  ingredient,
+) {
+  const original =
+    String(
+      ingredient?.original || "",
+    );
+
+  const match =
+    original.match(
+      /\b(?:about\s+)?(\d+(?:\.\d+)?)\s*(oz|ounces?|lbs?|pounds?|g|grams?|kg|kilograms?)\s+each\b/i,
+    );
+
+  if (!match) {
+    return null;
+  }
+
+  const quantity =
+    Number(match[1]);
+
+  if (
+    !Number.isFinite(quantity) ||
+    quantity <= 0
+  ) {
+    return null;
+  }
+
+  return {
+    quantity,
+    unit: match[2],
+  };
+}
+
 function packageSizeToGrams(
   ingredient,
 ) {
   const quantity =
     Number(ingredient.quantity);
 
+  const inferredEach =
+    explicitEachMass(ingredient);
+
   const packageQuantity =
     Number(
-      ingredient.packageSizeQuantity,
+      ingredient.packageSizeQuantity ??
+      inferredEach?.quantity,
     );
 
   if (
@@ -291,7 +328,9 @@ function packageSizeToGrams(
   // how the weight applies, not the mass unit itself.
   const packageSizeUnit =
     String(
-      ingredient.packageSizeUnit || "",
+      ingredient.packageSizeUnit ||
+      inferredEach?.unit ||
+      "",
     )
       .replace(
         /\beach\b/gi,
