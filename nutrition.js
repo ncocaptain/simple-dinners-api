@@ -239,10 +239,23 @@ function packageSizeToGrams(
     return null;
   }
 
+  // AI parsing may preserve wording such as "6 oz each"
+  // for a per-item package/portion weight. "Each" describes
+  // how the weight applies, not the mass unit itself.
+  const packageSizeUnit =
+    String(
+      ingredient.packageSizeUnit || "",
+    )
+      .replace(
+        /\beach\b/gi,
+        "",
+      )
+      .trim();
+
   const gramsPerPackage =
     directMassToGrams(
       packageQuantity,
-      ingredient.packageSizeUnit,
+      packageSizeUnit,
     );
 
   if (!gramsPerPackage) {
