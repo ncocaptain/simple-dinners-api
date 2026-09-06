@@ -1947,6 +1947,35 @@ function candidateContextAdjustment(
 
   let adjustment = 0;
 
+  const wantsCannedGreenChiles =
+    /\bgreen (?:chiles?|chilis?|chilies)\b/.test(
+      ingredientText,
+    ) &&
+    /\b(?:can|canned)\b/.test(
+      ingredientText,
+    );
+
+  if (wantsCannedGreenChiles) {
+    const isActualGreenChile =
+      description.includes("pepper") &&
+      description.includes("chili") &&
+      description.includes("green") &&
+      description.includes("canned") &&
+      !description.includes("tomato") &&
+      !description.includes("sauce");
+
+    if (isActualGreenChile) {
+      adjustment += 300;
+    }
+
+    if (
+      description.includes("tomato") ||
+      description.includes("sauce")
+    ) {
+      adjustment -= 300;
+    }
+  }
+
   const wantsRedPepperFlakes =
     ingredientText.includes(
       "red pepper flakes",
@@ -2211,6 +2240,21 @@ function normalizeIdentityToken(
 ) {
   let value =
     String(token || "");
+
+  // USDA and recipe/product labels vary between chile,
+  // chiles, chili, and chilies. Treat them as one food
+  // identity without changing user-facing recipe wording.
+  if (
+    [
+      "chili",
+      "chilis",
+      "chilies",
+      "chile",
+      "chiles",
+    ].includes(value)
+  ) {
+    return "chili";
+  }
 
   if (
     value.endsWith("ies") &&
@@ -3472,6 +3516,25 @@ function ingredientSearchQuery(
     normalizeText(
       ingredient?.original,
     );
+
+  // Canned green chilies are a distinct food. A vague search
+  // can otherwise rank canned tomatoes with green chilies
+  // above the actual canned green-pepper records.
+  if (
+    [
+      "green chilies",
+      "green chiles",
+      "green chili",
+      "green chile",
+    ].includes(normalizedFood) &&
+    /\b(?:can|canned)\b/.test(
+      originalIngredient,
+    )
+  ) {
+    food = "green chili peppers canned";
+    normalizedFood =
+      normalizeText(food);
+  }
 
   // An explicitly whole chicken should search USDA using
   // the raw broiler/fryer meat-and-skin record that provides
