@@ -1027,6 +1027,87 @@ function countPortionTerms(
     return ["regular"];
   }
 
+  // USDA provides explicit individual-fruit / vegetable
+  // portions for these ordinary whole-food counts. Keep these
+  // rules narrow so we never turn an unspecified size into an
+  // arbitrary small/medium/large assumption.
+
+  if (
+    !unit &&
+    /\bbananas?\b/.test(text)
+  ) {
+    return ["banana"];
+  }
+
+  if (
+    !unit &&
+    /\bavocados?\b/.test(text)
+  ) {
+    return ["fruit"];
+  }
+
+  if (
+    !unit &&
+    /\bcucumbers?\b/.test(text)
+  ) {
+    return ["regular"];
+  }
+
+  if (
+    (
+      !unit ||
+      unit === "roma"
+    ) &&
+    /\broma tomato(?:es)?\b/.test(text)
+  ) {
+    return [
+      "plum tomato",
+      "italian tomato",
+    ];
+  }
+
+  if (
+    !unit &&
+    /\btomato(?:es)?\b/.test(text) &&
+    !/\b(?:cherry|grape|roma|plum) tomato(?:es)?\b/.test(
+      text,
+    )
+  ) {
+    return ["whole"];
+  }
+
+  if (
+    !unit &&
+    /\boranges?\b/.test(text)
+  ) {
+    return ["fruit"];
+  }
+
+  if (
+    !unit &&
+    /\bcarrots?\b/.test(text) &&
+    !/\bbaby carrots?\b/.test(text)
+  ) {
+    return ["regular carrot"];
+  }
+
+  if (
+    !unit &&
+    /\blemons?\b/.test(text)
+  ) {
+    return ["fruit"];
+  }
+
+  // USDA's generic strawberry "1 fruit" portion is 18 g,
+  // matching its explicit large-strawberry portion. Restrict
+  // this fallback to recipes that explicitly say large.
+  if (
+    unit === "large" &&
+    /\bstrawberries?\b/.test(text)
+  ) {
+    return ["fruit"];
+  }
+
   if (
     unit === "breast" ||
     /\bchicken breasts?\b/.test(
@@ -3558,6 +3639,135 @@ async function resolveIngredient({
       nutrients:
         roundNutrition(nutrients),
     };
+  }
+
+  // Roma-specific USDA records can have appropriate nutrient
+  // data but no usable whole-tomato portion. USDA's generic
+  // raw tomato record has an explicit "1 plum tomato" portion,
+  // which is appropriate for a counted Roma tomato.
+  const romaTomatoText =
+    normalizeText(
+      [
+        ingredient?.food,
+        ingredient?.original,
+      ]
+        .filter(Boolean)
+        .join(" "),
+    );
+
+  const romaTomatoUnit =
+    normalizeUnit(
+      ingredient?.unit,
+    );
+
+  const hasRomaTomatoCount =
+    Number.isFinite(
+      Number(ingredient?.quantity),
+    ) &&
+    Number(ingredient?.quantity) > 0 &&
+    (
+      /\broma tomato(?:es)?\b/.test(
+        romaTomatoText,
+      ) ||
+      (
+        romaTomatoUnit === "roma" &&
+        /\btomato(?:es)?\b/.test(
+          romaTomatoText,
+        )
+      )
+    );
+
+  if (hasRomaTomatoCount) {
+    const fallbackIngredient = {
+      ...ingredient,
+      unit: null,
+      food: "tomato",
+      original:
+        `${ingredient.quantity || ""} roma tomato`
+          .trim(),
+    };
+
+    const fallbackFoods =
+      await searchUsdaFood(
+        "tomatoes raw",
+        apiKey,
+        fallbackIngredient,
+      );
+
+    const fallbackRanked =
+      rankFoodCandidates(
+        fallbackFoods,
+        fallbackIngredient,
+      )
+        .filter(
+          selected =>
+            normalizeText(
+              selected?.food?.description,
+            ) === "tomatoes raw",
+        );
+
+    for (
+      const selected
+      of fallbackRanked.slice(0, 3)
+    ) {
+      if (!selected?.food?.fdcId) {
+        continue;
+      }
+
+      let food;
+
+      try {
+        food =
+          await fetchUsdaFood(
+            selected.food.fdcId,
+            apiKey,
+          );
+      } catch {
+        continue;
+      }
+
+      const gramResult =
+        ingredientToGrams(
+          food,
+          fallbackIngredient,
+        );
+
+      if (!gramResult) {
+        continue;
+      }
+
+      const per100g =
+        nutrientsPer100g(food);
+
+      const nutrients =
+        scaleNutrients(
+          per100g,
+          gramResult.grams,
+        );
+
+      return {
+        status: "resolved",
+        ingredient,
+        grams:
+          Math.round(
+            gramResult.grams * 10,
+          ) / 10,
+        conversionMethod:
+          gramResult.method,
+        match: {
+          fdcId:
+            selected.food.fdcId,
+          description:
+            selected.food.description,
+          dataType:
+            selected.food.dataType,
+          score:
+            selected.score,
+        },
+        nutrients:
+          roundNutrition(nutrients),
+      };
+    }
   }
 
   // Color-specific USDA onion records can be nutritionally
