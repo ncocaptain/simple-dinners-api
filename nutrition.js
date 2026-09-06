@@ -102,7 +102,25 @@ function normalizeUsdaSearchQuery(
       /(\d)\s*\/\s*(\d)/g,
       "$1 $2",
     )
-    .replace(/\s+/g, " ");
+    // Temperature does not change food identity, but words
+    // such as "cold" and "hot" can badly skew USDA search.
+    .replace(
+      /\b(?:cold|hot|warm)\s+water\b/gi,
+      "water",
+    )
+    .replace(
+      /\bcold\s+milk\b/gi,
+      "milk",
+    )
+    // Remove preparation adjectives that do not materially
+    // change the food's nutrition identity. Keep product-form
+    // terms such as "diced tomatoes" or "crushed tomatoes".
+    .replace(
+      /\b(?:softened|melted|smashed|julienned|ripe|halved|peeled|cored|segmented)\b/gi,
+      " ",
+    )
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 function normalizeUnit(value) {
@@ -1839,6 +1857,17 @@ const FOOD_IDENTITY_IGNORED_TOKENS =
   new Set([
     "fresh",
     "freshly",
+    "cold",
+    "hot",
+    "warm",
+    "softened",
+    "melted",
+    "smashed",
+    "julienned",
+    "ripe",
+    "halved",
+    "cored",
+    "segmented",
     "baby",
     "boneless",
     "skinless",
@@ -3307,7 +3336,32 @@ function dedupeParsedIngredients(
   });
 }
 
-function shouldExcludeFromCoverage(
+function isClearlyNonFoodIngredient(
+  ingredient,
+) {
+  const text =
+    normalizeText(
+      [
+        ingredient?.food,
+        ingredient?.original,
+      ]
+        .filter(Boolean)
+        .join(" "),
+    );
+
+  return (
+    /\baluminum foil\b/.test(text) ||
+    /\baluminium foil\b/.test(text) ||
+    /\bparchment paper\b/.test(text) ||
+    /\btoothpicks?\b/.test(text) ||
+    /\b(?:wooden|metal|bamboo)(?:\s+or\s+(?:wooden|metal|bamboo))?\s+skewers?\b/.test(
+      text,
+    ) ||
+    /\bpie iron cooker\b/.test(text)
+  );
+}
+
+function coverageExclusionReason(
   ingredient,
 ) {
   const quantity =
@@ -3319,16 +3373,76 @@ function shouldExcludeFromCoverage(
     Number.isFinite(quantity) &&
     quantity > 0;
 
-  return (
-    (
-      ingredient?.toTaste === true &&
-      !hasUsableQuantity
-    ) ||
-    ingredient?.garnishOnly === true ||
-    (
-      ingredient?.optional === true &&
-      !hasUsableQuantity
+  const original =
+    normalizeText(
+      ingredient?.original,
+    );
+
+  if (
+    ingredient?.toTaste === true &&
+    !hasUsableQuantity
+  ) {
+    return "to-taste";
+  }
+
+  if (
+    ingredient?.garnishOnly === true
+  ) {
+    return "garnish-only";
+  }
+
+  if (
+    ingredient?.optional === true &&
+    !hasUsableQuantity
+  ) {
+    return "optional-without-quantity";
+  }
+
+  if (
+    !hasUsableQuantity &&
+    /\bfor garnish\b/.test(original)
+  ) {
+    return "for-garnish-without-quantity";
+  }
+
+  const isServingCondiment =
+    /\b(?:ketchup|mustard|ranch dressing|hot sauce|barbecue sauce|bbq sauce)\b/.test(
+      normalizeText(
+        [
+          ingredient?.food,
+          ingredient?.original,
+        ]
+          .filter(Boolean)
+          .join(" "),
+      ),
+    );
+
+  if (
+    !hasUsableQuantity &&
+    isServingCondiment &&
+    /\bfor serving\b/.test(original)
+  ) {
+    return "serving-condiment-without-quantity";
+  }
+
+  if (
+    isClearlyNonFoodIngredient(
+      ingredient,
     )
+  ) {
+    return "non-food-item";
+  }
+
+  return null;
+}
+
+function shouldExcludeFromCoverage(
+  ingredient,
+) {
+  return (
+    coverageExclusionReason(
+      ingredient,
+    ) !== null
   );
 }
 
@@ -4159,11 +4273,9 @@ export async function analyzeRecipeNutrition({
       excluded.push({
         ingredient,
         reason:
-          ingredient?.toTaste
-            ? "to-taste"
-            : ingredient?.garnishOnly
-              ? "garnish-only"
-              : "optional-without-quantity",
+          coverageExclusionReason(
+            ingredient,
+          ),
       });
 
       continue;
