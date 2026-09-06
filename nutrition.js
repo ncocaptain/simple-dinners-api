@@ -244,8 +244,8 @@ function directMassQuantity(
   }
 
   // For an explicit recipe range, use the stated minimum
-  // rather than inventing an average. This is intentionally
-  // limited to direct mass conversion.
+  // rather than inventing an average. This helper is used only
+  // when the associated unit is an explicit mass measurement.
   return lower;
 }
 
@@ -317,6 +317,29 @@ function explicitEachMass(
   };
 }
 
+function explicitParentheticalMass(
+  ingredient,
+) {
+  const original =
+    String(
+      ingredient?.original || "",
+    );
+
+  const match =
+    original.match(
+      /\(\s*(?:about\s+)?(\d+(?:\.\d+)?(?:\s*(?:to|-|–|—)\s*\d+(?:\.\d+)?)?)\s*(oz|ounces?|lbs?|pounds?|g|grams?|kg|kilograms?)\s*\)/i,
+    );
+
+  if (!match) {
+    return null;
+  }
+
+  return {
+    quantity: match[1],
+    unit: match[2],
+  };
+}
+
 function packageSizeToGrams(
   ingredient,
 ) {
@@ -326,10 +349,37 @@ function packageSizeToGrams(
   const inferredEach =
     explicitEachMass(ingredient);
 
+  const inferredParenthetical =
+    explicitParentheticalMass(
+      ingredient,
+    );
+
+  const ingredientUnit =
+    normalizeUnit(
+      ingredient?.unit,
+    );
+
+  const canUseParentheticalPackageMass =
+    [
+      "can",
+      "package",
+      "packet",
+      "jar",
+      "bottle",
+      "carton",
+      "box",
+      "bag",
+    ].includes(ingredientUnit);
+
   const packageQuantity =
-    Number(
+    directMassQuantity(
       ingredient.packageSizeQuantity ??
-      inferredEach?.quantity,
+      inferredEach?.quantity ??
+      (
+        canUseParentheticalPackageMass
+          ? inferredParenthetical?.quantity
+          : null
+      ),
     );
 
   if (
@@ -348,6 +398,11 @@ function packageSizeToGrams(
     String(
       ingredient.packageSizeUnit ||
       inferredEach?.unit ||
+      (
+        canUseParentheticalPackageMass
+          ? inferredParenthetical?.unit
+          : ""
+      ) ||
       "",
     )
       .replace(
@@ -1603,33 +1658,201 @@ function brandedCountServingToGrams(
   );
 }
 
+function isWholeChickenIngredient(
+  ingredient,
+) {
+  const text =
+    normalizeText(
+      [
+        ingredient?.food,
+        ingredient?.original,
+      ]
+        .filter(Boolean)
+        .join(" "),
+    );
+
+  return /\bwhole chicken\b/.test(
+    text,
+  );
+}
+
+function wholeChickenYieldToGrams(
+  food,
+  ingredient,
+) {
+  if (
+    !isWholeChickenIngredient(
+      ingredient,
+    )
+  ) {
+    return null;
+  }
+
+  if (
+    normalizeText(
+      food?.description,
+    ) !==
+    "chicken broilers or fryers meat and skin raw"
+  ) {
+    return null;
+  }
+
+  const inferredMass =
+    explicitParentheticalMass(
+      ingredient,
+    );
+
+  const parsedPackageQuantity =
+    directMassQuantity(
+      ingredient?.packageSizeQuantity,
+    );
+
+  let purchasedGrams = null;
+
+  if (parsedPackageQuantity) {
+    purchasedGrams =
+      directMassToGrams(
+        parsedPackageQuantity,
+        ingredient?.packageSizeUnit ||
+          inferredMass?.unit,
+      );
+  }
+
+  if (
+    !purchasedGrams &&
+    inferredMass
+  ) {
+    purchasedGrams =
+      directMassToGrams(
+        directMassQuantity(
+          inferredMass.quantity,
+        ),
+        inferredMass.unit,
+      );
+  }
+
+  if (!purchasedGrams) {
+    purchasedGrams =
+      directMassToGrams(
+        directMassQuantity(
+          ingredient?.quantity,
+        ),
+        ingredient?.unit,
+      );
+  }
+
+  if (!purchasedGrams) {
+    return null;
+  }
+
+  const portions =
+    Array.isArray(
+      food?.foodPortions,
+    )
+      ? food.foodPortions
+      : [];
+
+  const yieldPortion =
+    portions.find(portion => {
+      const text =
+        normalizeText(
+          [
+            portion?.modifier,
+            portion?.portionDescription,
+          ]
+            .filter(Boolean)
+            .join(" "),
+        );
+
+      return text.includes(
+        "yield from 1 lb ready to cook chicken",
+      );
+    });
+
+  const yieldGrams =
+    Number(
+      yieldPortion?.gramWeight,
+    );
+
+  const portionAmount =
+    Number(
+      yieldPortion?.amount || 1,
+    );
+
+  if (
+    !Number.isFinite(yieldGrams) ||
+    yieldGrams <= 0 ||
+    !Number.isFinite(portionAmount) ||
+    portionAmount <= 0
+  ) {
+    return null;
+  }
+
+  const purchasedPounds =
+    purchasedGrams /
+    GRAMS_PER_POUND;
+
+  return (
+    purchasedPounds *
+    (
+      yieldGrams /
+      portionAmount
+    )
+  );
+}
+
 function ingredientToGrams(
   food,
   ingredient,
 ) {
-  const packageGrams =
-    packageSizeToGrams(ingredient);
+  const wholeChicken =
+    isWholeChickenIngredient(
+      ingredient,
+    );
 
-  if (packageGrams) {
+  const wholeChickenGrams =
+    wholeChickenYieldToGrams(
+      food,
+      ingredient,
+    );
+
+  if (wholeChickenGrams) {
     return {
-      grams: packageGrams,
-      method: "package-weight",
+      grams: wholeChickenGrams,
+      method:
+        "usda-ready-to-cook-yield",
     };
   }
 
-  const directGrams =
-    directMassToGrams(
-      directMassQuantity(
-        ingredient.quantity,
-      ),
-      ingredient.unit,
-    );
+  // A whole-bird weight is purchased weight and includes
+  // bones. Never pass it through the ordinary package/direct
+  // mass paths if USDA's edible-yield conversion did not
+  // succeed.
+  if (!wholeChicken) {
+    const packageGrams =
+      packageSizeToGrams(ingredient);
 
-  if (directGrams) {
-    return {
-      grams: directGrams,
-      method: "direct-weight",
-    };
+    if (packageGrams) {
+      return {
+        grams: packageGrams,
+        method: "package-weight",
+      };
+    }
+
+    const directGrams =
+      directMassToGrams(
+        directMassQuantity(
+          ingredient.quantity,
+        ),
+        ingredient.unit,
+      );
+
+    if (directGrams) {
+      return {
+        grams: directGrams,
+        method: "direct-weight",
+      };
+    }
   }
 
   const portionGrams =
@@ -3249,6 +3472,24 @@ function ingredientSearchQuery(
     normalizeText(
       ingredient?.original,
     );
+
+  // An explicitly whole chicken should search USDA using
+  // the raw broiler/fryer meat-and-skin record that provides
+  // a ready-to-cook whole-bird edible-yield portion.
+  if (
+    (
+      normalizedFood === "chicken" ||
+      normalizedFood === "whole chicken"
+    ) &&
+    /\bwhole chicken\b/.test(
+      originalIngredient,
+    )
+  ) {
+    food =
+      "chicken broilers or fryers meat and skin raw";
+    normalizedFood =
+      normalizeText(food);
+  }
 
   // A plain egg search currently returns stale Foundation
   // records followed by prepared egg dishes. For a basic
