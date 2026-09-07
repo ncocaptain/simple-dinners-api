@@ -1658,6 +1658,213 @@ function brandedCountServingToGrams(
   );
 }
 
+function citrusJuiceRequest(
+  ingredient,
+) {
+  const original =
+    String(
+      ingredient?.original || "",
+    );
+
+  const text =
+    normalizeText(
+      [
+        ingredient?.food,
+        original,
+      ]
+        .filter(Boolean)
+        .join(" "),
+    );
+
+  // Only use fruit-yield weights when the recipe explicitly
+  // calls for juice from a whole citrus fruit. Measured juice
+  // such as "2 Tbsp lemon juice" should continue through the
+  // ordinary volume conversion path.
+  if (
+    !/\bjuiced\b/.test(text) &&
+    !/\bjuice of\b/.test(text)
+  ) {
+    return null;
+  }
+
+  let fruit = null;
+
+  if (/\blemons?\b/.test(text)) {
+    fruit = "lemon";
+  } else if (/\blimes?\b/.test(text)) {
+    fruit = "lime";
+  } else if (/\boranges?\b/.test(text)) {
+    fruit = "orange";
+  }
+
+  if (!fruit) {
+    return null;
+  }
+
+  // USDA's yield portions here represent an ordinary,
+  // unsized fruit. Do not silently apply them when the
+  // recipe explicitly requests a size.
+  if (
+    new RegExp(
+      `\\b(?:small|medium|large|extra large)\\s+${fruit}s?\\b`,
+      "i",
+    ).test(original)
+  ) {
+    return null;
+  }
+
+  let quantity =
+    Number(
+      ingredient?.quantity,
+    );
+
+  if (
+    !Number.isFinite(quantity) ||
+    quantity <= 0
+  ) {
+    const match =
+      original.match(
+        /(?:juice\s+of\s+)?(\d+\s+\d+\/\d+|\d+\/\d+|\d+(?:\.\d+)?)\s+(?:whole\s+)?(lemons?|limes?|oranges?)\b/i,
+      );
+
+    if (match) {
+      quantity =
+        parseHouseholdNumber(
+          match[1],
+        );
+    }
+  }
+
+  if (
+    !Number.isFinite(quantity) ||
+    quantity <= 0
+  ) {
+    return null;
+  }
+
+  return {
+    fruit,
+    quantity,
+  };
+}
+
+function citrusJuiceYieldToGrams(
+  food,
+  ingredient,
+) {
+  const request =
+    citrusJuiceRequest(
+      ingredient,
+    );
+
+  if (!request) {
+    return null;
+  }
+
+  const description =
+    normalizeText(
+      food?.description,
+    );
+
+  const validJuiceFood =
+    (
+      request.fruit === "lime" &&
+      description ===
+        "lime juice raw"
+    ) ||
+    (
+      request.fruit === "lemon" &&
+      description ===
+        "lemon juice raw"
+    ) ||
+    (
+      request.fruit === "orange" &&
+      (
+        description.startsWith(
+          "orange juice raw",
+        ) ||
+        description ===
+          "orange juice 100 freshly squeezed"
+      )
+    );
+
+  if (!validJuiceFood) {
+    return null;
+  }
+
+  const portions =
+    Array.isArray(
+      food?.foodPortions,
+    )
+      ? food.foodPortions
+      : [];
+
+  const yieldPortion =
+    portions.find(portion => {
+      const portionText =
+        normalizeText(
+          [
+            portion?.modifier,
+            portion?.portionDescription,
+          ]
+            .filter(Boolean)
+            .join(" "),
+        );
+
+      if (
+        request.fruit === "lime"
+      ) {
+        return portionText.includes(
+          "lime yields",
+        );
+      }
+
+      if (
+        request.fruit === "lemon"
+      ) {
+        return portionText.includes(
+          "lemon yields",
+        );
+      }
+
+      return (
+        portionText.includes(
+          "fruit yields",
+        ) ||
+        portionText.includes(
+          "juice of 1 orange",
+        )
+      );
+    });
+
+  const yieldGrams =
+    Number(
+      yieldPortion?.gramWeight,
+    );
+
+  const portionAmount =
+    Number(
+      yieldPortion?.amount || 1,
+    );
+
+  if (
+    !Number.isFinite(yieldGrams) ||
+    yieldGrams <= 0 ||
+    !Number.isFinite(portionAmount) ||
+    portionAmount <= 0
+  ) {
+    return null;
+  }
+
+  return (
+    request.quantity *
+    (
+      yieldGrams /
+      portionAmount
+    )
+  );
+}
+
 function isWholeChickenIngredient(
   ingredient,
 ) {
@@ -1805,6 +2012,20 @@ function ingredientToGrams(
   food,
   ingredient,
 ) {
+  const citrusJuiceGrams =
+    citrusJuiceYieldToGrams(
+      food,
+      ingredient,
+    );
+
+  if (citrusJuiceGrams) {
+    return {
+      grams: citrusJuiceGrams,
+      method:
+        "usda-citrus-juice-yield",
+    };
+  }
+
   const wholeChicken =
     isWholeChickenIngredient(
       ingredient,
@@ -2361,6 +2582,29 @@ function foodIdentityCompatibility(
     normalizeText(
       ingredient?.food,
     );
+
+  const citrusJuice =
+    citrusJuiceRequest(
+      ingredient,
+    );
+
+  if (citrusJuice) {
+    const isRequestedJuice =
+      candidateDescription.includes(
+        citrusJuice.fruit,
+      ) &&
+      candidateDescription.includes(
+        "juice",
+      );
+
+    if (!isRequestedJuice) {
+      return {
+        compatible: false,
+        overlap,
+        required,
+      };
+    }
+  }
 
   // In ordinary recipe wording, a plain "pepper" ingredient
   // means black pepper. USDA search results can otherwise
@@ -3516,6 +3760,24 @@ function ingredientSearchQuery(
     normalizeText(
       ingredient?.original,
     );
+
+  const citrusJuice =
+    citrusJuiceRequest(
+      ingredient,
+    );
+
+  if (citrusJuice) {
+    // Orange's USDA freshly-squeezed record exposes an
+    // explicit "Juice of 1 orange" portion. Lemon and lime
+    // expose equivalent raw-juice yield portions.
+    food =
+      citrusJuice.fruit === "orange"
+        ? "orange juice 100 freshly squeezed"
+        : `${citrusJuice.fruit} juice raw`;
+
+    normalizedFood =
+      normalizeText(food);
+  }
 
   // Canned green chilies are a distinct food. A vague search
   // can otherwise rank canned tomatoes with green chilies
