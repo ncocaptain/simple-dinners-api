@@ -1865,6 +1865,118 @@ function citrusJuiceYieldToGrams(
   );
 }
 
+function isCountedDuckLegIngredient(
+  ingredient,
+) {
+  const food =
+    normalizeText(
+      ingredient?.food,
+    );
+
+  const original =
+    normalizeText(
+      ingredient?.original,
+    );
+
+  const quantity =
+    Number(
+      ingredient?.quantity,
+    );
+
+  return (
+    Number.isFinite(quantity) &&
+    quantity > 0 &&
+    (
+      food === "duck leg" ||
+      food === "duck legs"
+    ) &&
+    /\bduck legs?\b/.test(original) &&
+    !/\b(?:skinless|skin removed|without skin)\b/.test(
+      original,
+    )
+  );
+}
+
+function duckLegYieldToGrams(
+  food,
+  ingredient,
+) {
+  if (
+    !isCountedDuckLegIngredient(
+      ingredient,
+    )
+  ) {
+    return null;
+  }
+
+  if (
+    normalizeText(
+      food?.description,
+    ) !==
+    "duck young duckling domesticated white pekin leg meat and skin bone in cooked roasted"
+  ) {
+    return null;
+  }
+
+  const portions =
+    Array.isArray(
+      food?.foodPortions,
+    )
+      ? food.foodPortions
+      : [];
+
+  const legYield =
+    portions.find(portion => {
+      const text =
+        normalizeText(
+          [
+            portion?.modifier,
+            portion?.portionDescription,
+          ]
+            .filter(Boolean)
+            .join(" "),
+        );
+
+      return text.includes(
+        "leg bone removed yield after cooking",
+      );
+    });
+
+  const gramWeight =
+    Number(
+      legYield?.gramWeight,
+    );
+
+  const amount =
+    Number(
+      legYield?.amount || 1,
+    );
+
+  const quantity =
+    Number(
+      ingredient?.quantity,
+    );
+
+  if (
+    !Number.isFinite(gramWeight) ||
+    gramWeight <= 0 ||
+    !Number.isFinite(amount) ||
+    amount <= 0 ||
+    !Number.isFinite(quantity) ||
+    quantity <= 0
+  ) {
+    return null;
+  }
+
+  return (
+    quantity *
+    (
+      gramWeight /
+      amount
+    )
+  );
+}
+
 function isWholeChickenIngredient(
   ingredient,
 ) {
@@ -2023,6 +2135,20 @@ function ingredientToGrams(
       grams: citrusJuiceGrams,
       method:
         "usda-citrus-juice-yield",
+    };
+  }
+
+  const duckLegGrams =
+    duckLegYieldToGrams(
+      food,
+      ingredient,
+    );
+
+  if (duckLegGrams) {
+    return {
+      grams: duckLegGrams,
+      method:
+        "usda-duck-leg-edible-yield",
     };
   }
 
@@ -2422,6 +2548,7 @@ const FOOD_IDENTITY_IGNORED_TOKENS =
     "halved",
     "cored",
     "segmented",
+    "juiced",
     "baby",
     "boneless",
     "skinless",
@@ -3794,6 +3921,27 @@ function ingredientSearchQuery(
     )
   ) {
     food = "green chili peppers canned";
+    normalizedFood =
+      normalizeText(food);
+  }
+
+  // Counted duck legs should use USDA's cooked bone-in
+  // leg record because it provides an explicit edible yield
+  // after the bone is removed.
+  if (
+    (
+      normalizedFood === "duck leg" ||
+      normalizedFood === "duck legs"
+    ) &&
+    /\bduck legs?\b/.test(
+      originalIngredient,
+    ) &&
+    !/\b(?:skinless|skin removed|without skin)\b/.test(
+      originalIngredient,
+    )
+  ) {
+    food =
+      "duck young duckling domesticated white pekin leg meat and skin bone in cooked roasted";
     normalizedFood =
       normalizeText(food);
   }
