@@ -1405,6 +1405,36 @@ function parseHouseholdNumber(
     : null;
 }
 
+function explicitLeadingCountRangeQuantity(
+  ingredient,
+) {
+  const original =
+    String(
+      ingredient?.original || "",
+    ).trim();
+
+  const match =
+    original.match(
+      /^(\d+(?:\.\d+)?)\s*(?:to|-|–|—)\s*\d+(?:\.\d+)?\b/,
+    );
+
+  if (!match) {
+    return null;
+  }
+
+  const quantity =
+    Number(
+      match[1],
+    );
+
+  return (
+    Number.isFinite(quantity) &&
+    quantity > 0
+  )
+    ? quantity
+    : null;
+}
+
 function brandedHouseholdServingToGrams(
   food,
   ingredient,
@@ -1529,13 +1559,30 @@ function normalizeCountUnit(
     return "piece";
   }
 
+  if (
+    text === "pc" ||
+    text === "pcs"
+  ) {
+    return "piece";
+  }
+
+  // Only treat an exact parser/unit value of pepper/peppers
+  // as a count. Do not make foods such as "black pepper"
+  // into count-based ingredients.
+  if (
+    text === "pepper" ||
+    text === "peppers"
+  ) {
+    return "pepper";
+  }
+
   return null;
 }
 
 function ingredientCountUnit(
   ingredient,
 ) {
-  return (
+  const directUnit =
     normalizeCountUnit(
       ingredient?.unit,
     ) ||
@@ -1544,8 +1591,34 @@ function ingredientCountUnit(
     ) ||
     normalizeCountUnit(
       ingredient?.original,
+    );
+
+  if (directUnit) {
+    return directUnit;
+  }
+
+  const ingredientText =
+    normalizeText(
+      [
+        ingredient?.food,
+        ingredient?.original,
+      ]
+        .filter(Boolean)
+        .join(" "),
+    );
+
+  // Pepperoncini are commonly sold and described as whole
+  // individual peppers. Keep this narrow so ordinary
+  // ingredients such as black pepper never become counts.
+  if (
+    /\bpepperoncini peppers?\b/.test(
+      ingredientText,
     )
-  );
+  ) {
+    return "pepper";
+  }
+
+  return null;
 }
 
 function countUnitsCompatible(
@@ -1627,7 +1700,7 @@ function brandedCountServingToGrams(
 
   const match =
     household.match(
-      /(?:about\s+)?(\d+\s+\d+\/\d+|\d+\/\d+|\d+(?:\.\d+)?)\s+(?:[a-z]\s+)?(tortillas?|slices?|chips?|pieces?)\b/i,
+      /(?:about\s+)?(\d+\s+\d+\/\d+|\d+\/\d+|\d+(?:\.\d+)?)\s+(?:[a-z]\s+)?(tortillas?|slices?|chips?|pieces?|pcs?|peppers?)\b/i,
     );
 
   if (!match) {
@@ -1649,10 +1722,22 @@ function brandedCountServingToGrams(
       ingredient,
     );
 
-  const ingredientQuantity =
+  const parsedIngredientQuantity =
     Number(
       ingredient?.quantity,
     );
+
+  const ingredientQuantity =
+    Number.isFinite(
+      parsedIngredientQuantity,
+    ) &&
+    parsedIngredientQuantity > 0
+      ? parsedIngredientQuantity
+      : requestedUnit
+        ? explicitLeadingCountRangeQuantity(
+            ingredient,
+          )
+        : null;
 
   if (
     !householdQuantity ||
