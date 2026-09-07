@@ -317,6 +317,29 @@ function explicitEachMass(
   };
 }
 
+function explicitLeadingMass(
+  ingredient,
+) {
+  const original =
+    String(
+      ingredient?.original || "",
+    ).trim();
+
+  const match =
+    original.match(
+      /^(\d+(?:\.\d+)?(?:\s*(?:to|-|–|—)\s*\d+(?:\.\d+)?)?)\s*(oz|ounces?|lbs?|pounds?|g|grams?|kg|kilograms?)\b/i,
+    );
+
+  if (!match) {
+    return null;
+  }
+
+  return {
+    quantity: match[1],
+    unit: match[2],
+  };
+}
+
 function explicitParentheticalMass(
   ingredient,
 ) {
@@ -2199,6 +2222,29 @@ function ingredientToGrams(
         grams: directGrams,
         method: "direct-weight",
       };
+    }
+
+    const inferredLeadingMass =
+      explicitLeadingMass(
+        ingredient,
+      );
+
+    if (inferredLeadingMass) {
+      const inferredDirectGrams =
+        directMassToGrams(
+          directMassQuantity(
+            inferredLeadingMass.quantity,
+          ),
+          inferredLeadingMass.unit,
+        );
+
+      if (inferredDirectGrams) {
+        return {
+          grams: inferredDirectGrams,
+          method:
+            "original-direct-weight",
+        };
+      }
     }
   }
 
