@@ -1139,6 +1139,15 @@ function countPortionTerms(
     return ["banana"];
   }
 
+  // USDA FNDDS and SR Legacy both provide a 905 g
+  // "1 fruit" portion for raw pineapple.
+  if (
+    !unit &&
+    /\bpineapples?\b/.test(text)
+  ) {
+    return ["fruit"];
+  }
+
   if (
     !unit &&
     /\bavocados?\b/.test(text)
@@ -3001,6 +3010,28 @@ function foodIdentityCompatibility(
     };
   }
 
+  const isWholeFreshPineappleFallback =
+    /\bfresh pineapple\b/.test(
+      normalizeText(
+        ingredient?.original,
+      ),
+    ) &&
+    Number.isFinite(
+      Number(ingredient?.quantity),
+    ) &&
+    Number(ingredient?.quantity) > 0 &&
+    !ingredient?.unit &&
+    candidateDescription ===
+      "pineapple raw";
+
+  if (isWholeFreshPineappleFallback) {
+    return {
+      compatible: true,
+      overlap,
+      required,
+    };
+  }
+
   // In ordinary recipe wording, a plain "pepper" ingredient
   // means black pepper. USDA search results can otherwise
   // include jalapenos, bell peppers, or prepared pepper foods
@@ -4171,6 +4202,24 @@ function ingredientSearchQuery(
     normalizeText(
       ingredient?.original,
     );
+
+  if (
+    (
+      normalizedFood.includes("pineapple")
+    ) &&
+    /\bfresh pineapple\b/.test(
+      originalIngredient,
+    ) &&
+    Number.isFinite(
+      Number(ingredient?.quantity),
+    ) &&
+    Number(ingredient?.quantity) > 0 &&
+    !ingredient?.unit
+  ) {
+    food = "pineapple raw";
+    normalizedFood =
+      normalizeText(food);
+  }
 
   // An unsized zucchini can use USDA FNDDS's generic
   // green-summer-squash record, which provides an explicit
