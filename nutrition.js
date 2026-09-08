@@ -1066,7 +1066,9 @@ function countPortionTerms(
   }
 
   // USDA FNDDS has a real "1 whole" portion for summer /
-  // yellow squash.
+  // yellow squash. Its generic green-summer-squash record
+  // also provides an unsized whole portion appropriate for
+  // a recipe that simply says "1 zucchini".
   if (
     !unit &&
     (
@@ -1074,6 +1076,9 @@ function countPortionTerms(
         text,
       ) ||
       /\bsummer squash\b/.test(
+        text,
+      ) ||
+      /\bzucchinis?\b/.test(
         text,
       )
     )
@@ -2958,6 +2963,27 @@ function foodIdentityCompatibility(
     };
   }
 
+  // USDA FNDDS calls an ordinary unsized zucchini
+  // "Summer squash, green, raw". Allow that record only for
+  // zucchini requests without an explicit size.
+  const isGenericZucchiniFallback =
+    parsedFood === "zucchini" &&
+    !/\b(?:small|medium|large|baby) zucchini\b/.test(
+      normalizeText(
+        ingredient?.original,
+      ),
+    ) &&
+    candidateDescription ===
+      "summer squash green raw";
+
+  if (isGenericZucchiniFallback) {
+    return {
+      compatible: true,
+      overlap,
+      required,
+    };
+  }
+
   // In ordinary recipe wording, a plain "pepper" ingredient
   // means black pepper. USDA search results can otherwise
   // include jalapenos, bell peppers, or prepared pepper foods
@@ -4128,6 +4154,20 @@ function ingredientSearchQuery(
     normalizeText(
       ingredient?.original,
     );
+
+  // An unsized zucchini can use USDA FNDDS's generic
+  // green-summer-squash record, which provides an explicit
+  // 1-whole portion without assuming small/medium/large.
+  if (
+    normalizedFood === "zucchini" &&
+    !/\b(?:small|medium|large|baby) zucchini\b/.test(
+      originalIngredient,
+    )
+  ) {
+    food = "squash summer green zucchini raw";
+    normalizedFood =
+      normalizeText(food);
+  }
 
   // An explicitly large marshmallow should prefer USDA
   // branded records whose serving labels provide a piece
