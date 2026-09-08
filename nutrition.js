@@ -1618,6 +1618,17 @@ function ingredientCountUnit(
     return "pepper";
   }
 
+  // USDA branded large-marshmallow records expose servings
+  // in pieces. Require the explicit size wording so generic
+  // marshmallows are not assigned an arbitrary piece weight.
+  if (
+    /\blarge marshmallows?\b/.test(
+      ingredientText,
+    )
+  ) {
+    return "piece";
+  }
+
   return null;
 }
 
@@ -2841,6 +2852,27 @@ function foodIdentityCompatibility(
       ingredient?.food,
     );
 
+  // When the recipe explicitly asks for large marshmallows,
+  // require the USDA candidate to preserve that size identity.
+  // This avoids assigning a generic or differently sized
+  // marshmallow piece weight.
+  if (
+    /\blarge marshmallows?\b/.test(
+      normalizeText(
+        ingredient?.original,
+      ),
+    ) &&
+    !/\blarge marshmallows?\b/.test(
+      candidateDescription,
+    )
+  ) {
+    return {
+      compatible: false,
+      overlap,
+      required,
+    };
+  }
+
   const citrusJuice =
     citrusJuiceRequest(
       ingredient,
@@ -3346,6 +3378,11 @@ async function searchUsdaFood(
   const branded =
     isBrandRequested(
       ingredient,
+    ) ||
+    /\blarge marshmallows?\b/.test(
+      normalizeText(
+        ingredient?.original,
+      ),
     );
 
   const cacheKey =
@@ -4018,6 +4055,23 @@ function ingredientSearchQuery(
     normalizeText(
       ingredient?.original,
     );
+
+  // An explicitly large marshmallow should prefer USDA
+  // branded records whose serving labels provide a piece
+  // count, rather than the generic marshmallow record.
+  if (
+    (
+      normalizedFood === "marshmallow" ||
+      normalizedFood === "marshmallows"
+    ) &&
+    /\blarge marshmallows?\b/.test(
+      originalIngredient,
+    )
+  ) {
+    food = "large marshmallows";
+    normalizedFood =
+      normalizeText(food);
+  }
 
   const citrusJuice =
     citrusJuiceRequest(
