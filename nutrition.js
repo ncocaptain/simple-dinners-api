@@ -166,6 +166,10 @@ function normalizeUnit(value) {
     cup: "cup",
     cups: "cup",
 
+    qt: "quart",
+    quart: "quart",
+    quarts: "quart",
+
     clove: "clove",
     cloves: "clove",
 
@@ -682,6 +686,16 @@ function portionContextAdjustment(
     adjustment -= 100;
   }
 
+  // Do not use an ice measurement for liquid water unless
+  // the recipe actually calls for ice. USDA water records
+  // can otherwise make "1 cup ice" compete with "1 cup".
+  if (
+    portionText.includes("ice") &&
+    !ingredientText.includes("ice")
+  ) {
+    adjustment -= 100;
+  }
+
   if (
     portionText.includes("fluid") &&
     !ingredientText.includes("whipped")
@@ -762,6 +776,9 @@ function volumeUnitToTablespoons(
   unit,
 ) {
   switch (normalizeUnit(unit)) {
+    case "quart":
+      return 64;
+
     case "cup":
       return 16;
 
