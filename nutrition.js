@@ -1187,6 +1187,26 @@ function countPortionTerms(
     return ["fruit"];
   }
 
+  // Generic hot dog buns have an explicit USDA whole-bun
+  // portion. Keep this before the hot-dog rule so a bun is
+  // never mistaken for the sausage itself.
+  if (
+    !unit &&
+    /\bhot dog buns?\b/.test(text)
+  ) {
+    return ["hot dog bun"];
+  }
+
+  // An unspecified hot dog can use USDA's NFS regular-item
+  // portion rather than assuming beef, turkey, or vegetarian.
+  if (
+    !unit &&
+    /\bhot dogs?\b/.test(text) &&
+    !/\bhot dog buns?\b/.test(text)
+  ) {
+    return ["regular"];
+  }
+
   // USDA's generic strawberry "1 fruit" portion is 18 g,
   // matching its explicit large-strawberry portion. Restrict
   // this fallback to recipes that explicitly say large.
@@ -4078,6 +4098,17 @@ function ingredientSearchQuery(
   ) {
     food =
       "distilled vinegar";
+    normalizedFood =
+      normalizeText(food);
+  }
+
+  // An unspecified hot dog should use USDA's NFS record
+  // rather than silently assuming beef, turkey, vegetarian,
+  // or another formulation.
+  if (
+    normalizedFood === "hot dog"
+  ) {
+    food = "hot dog NFS";
     normalizedFood =
       normalizeText(food);
   }
