@@ -4584,6 +4584,33 @@ function coverageExclusionReason(
     return "serving-condiment-without-quantity";
   }
 
+  const ingredientText =
+    normalizeText(
+      [
+        ingredient?.food,
+        ingredient?.original,
+      ]
+        .filter(Boolean)
+        .join(" "),
+    );
+
+  const normalizedUnit =
+    normalizeUnit(
+      ingredient?.unit,
+    );
+
+  // Tea bags are used to infuse the drink and are discarded;
+  // do not treat the dry leaves/bag as consumed nutrition.
+  if (
+    /\btea\b/.test(ingredientText) &&
+    (
+      normalizedUnit === "tea bag" ||
+      /\btea bags?\b/.test(original)
+    )
+  ) {
+    return "brewing-infusion-item";
+  }
+
   if (
     isClearlyNonFoodIngredient(
       ingredient,
