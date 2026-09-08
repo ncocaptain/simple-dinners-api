@@ -1169,6 +1169,17 @@ function countPortionTerms(
     return ["regular carrot"];
   }
 
+  // USDA SR Legacy identifies one ordinary raw beet by its
+  // 2-inch diameter rather than the word "medium". Use that
+  // portion only when the recipe explicitly requests medium
+  // whole beets.
+  if (
+    unit === "medium" &&
+    /\bbeets?\b/.test(text)
+  ) {
+    return ['beet (2" dia)'];
+  }
+
   if (
     !unit &&
     /\blemons?\b/.test(text)
