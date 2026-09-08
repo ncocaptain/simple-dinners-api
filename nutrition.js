@@ -1197,6 +1197,16 @@ function countPortionTerms(
     return ["fruit"];
   }
 
+  // USDA FNDDS provides an explicit "1 small melon" portion
+  // for raw watermelon. Use it only when the recipe itself
+  // specifies a small whole watermelon.
+  if (
+    unit === "small" &&
+    /\bwatermelons?\b/.test(text)
+  ) {
+    return ["small melon"];
+  }
+
   if (
     unit === "breast" ||
     /\bchicken breasts?\b/.test(
@@ -2905,6 +2915,27 @@ function foodIdentityCompatibility(
         required,
       };
     }
+  }
+
+  // USDA's seedless-watermelon Foundation record has no
+  // whole-melon portions. FNDDS "Watermelon, raw" does provide
+  // explicit small/medium/large whole-melon portions, so allow
+  // that generic raw record as a narrow count fallback.
+  const isSeedlessWatermelonFallback =
+    /\bseedless watermelons?\b/.test(
+      normalizeText(
+        ingredient?.original,
+      ),
+    ) &&
+    candidateDescription ===
+      "watermelon raw";
+
+  if (isSeedlessWatermelonFallback) {
+    return {
+      compatible: true,
+      overlap,
+      required,
+    };
   }
 
   // In ordinary recipe wording, a plain "pepper" ingredient
