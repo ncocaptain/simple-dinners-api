@@ -1139,6 +1139,16 @@ function countPortionTerms(
     return ["banana"];
   }
 
+  // USDA FNDDS gives raw apple a 200 g "Quantity not
+  // specified" portion, identical to its 1-medium portion.
+  // Use that only when the recipe gives a count but no size.
+  if (
+    !unit &&
+    /\bapples?\b/.test(text)
+  ) {
+    return ["quantity not specified"];
+  }
+
   // USDA FNDDS and SR Legacy both provide a 905 g
   // "1 fruit" portion for raw pineapple.
   if (
@@ -2924,6 +2934,32 @@ function foodIdentityCompatibility(
       ingredient?.food,
     );
 
+  // Plain grapes are the fruit, not grape leaves. Because the
+  // shared "grape" identity token can otherwise make USDA's
+  // grape-leaf record appear compatible, reject it explicitly.
+  const parsedFoodIdentityTokens =
+    foodIdentityTokens(
+      ingredient?.food,
+    );
+
+  const isPlainGrapeIngredient =
+    parsedFoodIdentityTokens.length === 1 &&
+    parsedFoodIdentityTokens[0] ===
+      "grape";
+
+  if (
+    isPlainGrapeIngredient &&
+    /\bgrape leaves?\b/.test(
+      candidateDescription,
+    )
+  ) {
+    return {
+      compatible: false,
+      overlap,
+      required,
+    };
+  }
+
   // When the recipe explicitly asks for large marshmallows,
   // require the USDA candidate to preserve that size identity.
   // This avoids assigning a generic or differently sized
@@ -4198,10 +4234,39 @@ function ingredientSearchQuery(
       normalizeText(food);
   }
 
+  const searchFoodIdentityTokens =
+    foodIdentityTokens(food);
+
+  if (
+    searchFoodIdentityTokens.length === 1 &&
+    searchFoodIdentityTokens[0] ===
+      "grape"
+  ) {
+    food = "grapes raw";
+    normalizedFood =
+      normalizeText(food);
+  }
+
   const originalIngredient =
     normalizeText(
       ingredient?.original,
     );
+
+  if (
+    /\bapples?\b/.test(normalizedFood) &&
+    Number.isFinite(
+      Number(ingredient?.quantity),
+    ) &&
+    Number(ingredient?.quantity) > 0 &&
+    !ingredient?.unit &&
+    !/\b(?:small|medium|large|extra large) apples?\b/.test(
+      originalIngredient,
+    )
+  ) {
+    food = "apple raw";
+    normalizedFood =
+      normalizeText(food);
+  }
 
   if (
     (
@@ -4609,6 +4674,22 @@ function coverageExclusionReason(
     )
   ) {
     return "brewing-infusion-item";
+  }
+
+  if (
+    !hasUsableQuantity &&
+    /\bcrushed ice\b/.test(
+      normalizeText(
+        [
+          ingredient?.food,
+          ingredient?.original,
+        ]
+          .filter(Boolean)
+          .join(" "),
+      ),
+    )
+  ) {
+    return "unmeasured-ice";
   }
 
   if (
