@@ -85,8 +85,14 @@ function parseJsonResponse(value) {
   }
 }
 
-function normalizeText(value) {
+function removeDiacritics(value) {
   return String(value || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "");
+}
+
+function normalizeText(value) {
+  return removeDiacritics(value)
     .toLowerCase()
     .replace(/[’']/g, "")
     .replace(/[^a-z0-9]+/g, " ")
@@ -96,7 +102,7 @@ function normalizeText(value) {
 function normalizeUsdaSearchQuery(
   value,
 ) {
-  return String(value || "")
+  return removeDiacritics(value)
     .trim()
     .replace(
       /(\d)\s*\/\s*(\d)/g,
@@ -2786,6 +2792,7 @@ const FOOD_IDENTITY_IGNORED_TOKENS =
     "beaten",
     "thawed",
     "drained",
+    "rinsed",
     "chopped",
     "minced",
     "diced",
@@ -2950,6 +2957,80 @@ function foodIdentityCompatibility(
   if (
     isPlainGrapeIngredient &&
     /\bgrape leaves?\b/.test(
+      candidateDescription,
+    )
+  ) {
+    return {
+      compatible: false,
+      overlap,
+      required,
+    };
+  }
+
+  // "Black" is part of the bean identity, not an optional
+  // descriptor. Never satisfy black beans with pinto or another
+  // bean merely because preparation words overlap.
+  const wantsBlackBeans =
+    ingredientTokens.includes("black") &&
+    ingredientTokens.includes("bean");
+
+  if (
+    wantsBlackBeans &&
+    !(
+      candidateTokens.has("black") &&
+      candidateTokens.has("bean")
+    )
+  ) {
+    return {
+      compatible: false,
+      overlap,
+      required,
+    };
+  }
+
+  // A recipe that simply says "corn" does not tell us
+  // whether it is fresh, frozen, canned, creamed, or another
+  // form. USDA does not provide a defensible generic/NFS corn
+  // cup portion, so accept only a truly generic corn record.
+  const isPlainCornIngredient =
+    ingredientTokens.length === 1 &&
+    ingredientTokens[0] === "corn";
+
+  if (
+    isPlainCornIngredient &&
+    ![
+      "corn",
+      "corn nfs",
+    ].includes(candidateDescription)
+  ) {
+    return {
+      compatible: false,
+      overlap,
+      required,
+    };
+  }
+
+  // If a recipe simply says jalapeno, do not silently choose
+  // raw/fresh versus pickled/canned. A genuinely generic USDA
+  // jalapeno record may still be used.
+  const isJalapenoIngredient =
+    ingredientTokens.length === 1 &&
+    ingredientTokens[0] === "jalapeno";
+
+  const originalIngredient =
+    normalizeText(
+      ingredient?.original,
+    );
+
+  const jalapenoFormSpecified =
+    /\b(?:fresh|raw|pickled|canned|jarred)\b/.test(
+      originalIngredient,
+    );
+
+  if (
+    isJalapenoIngredient &&
+    !jalapenoFormSpecified &&
+    /\b(?:raw|fresh|pickled|canned|jarred)\b/.test(
       candidateDescription,
     )
   ) {
@@ -5300,10 +5381,21 @@ async function resolveIngredient({
 
   let brandedCandidatesToTry = [];
 
+  const brandedFallbackIdentityTokens =
+    foodIdentityTokens(
+      ingredient?.food,
+    );
+
+  const isUnspecifiedPlainCorn =
+    brandedFallbackIdentityTokens.length === 1 &&
+    brandedFallbackIdentityTokens[0] ===
+      "corn";
+
   if (
     !isBrandRequested(
       ingredient,
-    )
+    ) &&
+    !isUnspecifiedPlainCorn
   ) {
     const brandedQuery =
       brandedFallbackSearchQuery(
