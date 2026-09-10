@@ -1545,15 +1545,48 @@ function brandedHouseholdServingToGrams(
       food?.servingSizeUnit,
     );
 
-  if (
-    !Number.isFinite(servingSize) ||
-    servingSize <= 0 ||
-    ![
+  const ingredientFood =
+    normalizeText(
+      ingredient?.food,
+    );
+
+  const foodDescription =
+    normalizeText(
+      food?.description,
+    );
+
+  const isGramServing =
+    [
       "g",
       "gram",
       "grams",
       "grm",
-    ].includes(servingUnit)
+    ].includes(servingUnit);
+
+  // USDA branded rice-vinegar records commonly express
+  // one tablespoon as 15 mL rather than grams. Generic
+  // USDA vinegar records independently place one tablespoon
+  // at about 15 g, so this narrow 1 mL ~= 1 g conversion is
+  // defensible for plain, unseasoned rice vinegar only.
+  const isRiceVinegarMilliliterServing =
+    ingredientFood ===
+      "rice vinegar" &&
+    foodDescription ===
+      "rice vinegar" &&
+    [
+      "ml",
+      "mlt",
+      "milliliter",
+      "milliliters",
+    ].includes(servingUnit);
+
+  if (
+    !Number.isFinite(servingSize) ||
+    servingSize <= 0 ||
+    (
+      !isGramServing &&
+      !isRiceVinegarMilliliterServing
+    )
   ) {
     return null;
   }
@@ -2968,6 +3001,21 @@ function foodIdentityCompatibility(
     isPlainGrapeIngredient &&
     /\bgrape leaves?\b/.test(
       candidateDescription,
+    )
+  ) {
+    return {
+      compatible: false,
+      overlap,
+      required,
+    };
+  }
+
+  // Plain rice vinegar is not the same product as seasoned
+  // rice vinegar, which may contain added sugar and sodium.
+  if (
+    parsedFood === "rice vinegar" &&
+    candidateDescription.includes(
+      "seasoned",
     )
   ) {
     return {
@@ -4608,6 +4656,15 @@ function brandedFallbackSearchQuery(
     )
     .replace(
       /\bsize\b/gi,
+      " ",
+    )
+
+    // A parenthetical beginning with "or" describes an alternate
+    // ingredient rather than the primary food being searched.
+    // Example: "rice vinegar (or apple cider vinegar)" should
+    // search branded foods for "rice vinegar", not both products.
+    .replace(
+      /\(\s*or\b[^)]*\)/gi,
       " ",
     )
 
