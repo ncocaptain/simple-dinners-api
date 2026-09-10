@@ -182,6 +182,9 @@ function normalizeUnit(value) {
     slice: "slice",
     slices: "slice",
 
+    ear: "ear",
+    ears: "ear",
+
     piece: "piece",
     pieces: "piece",
 
