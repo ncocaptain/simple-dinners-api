@@ -1045,6 +1045,16 @@ function countPortionTerms(
         .join(" "),
     );
 
+  // USDA FNDDS provides an explicit "1 regular ear" portion
+  // for raw corn. Use it only when the recipe itself measures
+  // corn in ears; plain cup measurements remain form-ambiguous.
+  if (
+    unit === "ear" &&
+    /\bcorn\b/.test(text)
+  ) {
+    return ["regular ear"];
+  }
+
   if (
     (
       !unit ||
@@ -2988,6 +2998,26 @@ function foodIdentityCompatibility(
     };
   }
 
+  // An explicit ear measurement establishes fresh corn-on-the-cob.
+  // USDA FNDDS "Corn, raw" supplies a generic 1-regular-ear
+  // portion without choosing yellow versus white corn.
+  const isEarCornIngredient =
+    normalizeUnit(
+      ingredient?.unit,
+    ) === "ear" &&
+    ingredientTokens.includes("corn");
+
+  if (
+    isEarCornIngredient &&
+    candidateDescription === "corn raw"
+  ) {
+    return {
+      compatible: true,
+      overlap,
+      required,
+    };
+  }
+
   // A recipe that simply says "corn" does not tell us
   // whether it is fresh, frozen, canned, creamed, or another
   // form. USDA does not provide a defensible generic/NFS corn
@@ -4332,6 +4362,17 @@ function ingredientSearchQuery(
     normalizeText(
       ingredient?.original,
     );
+
+  if (
+    normalizeUnit(
+      ingredient?.unit,
+    ) === "ear" &&
+    /\bcorn\b/.test(normalizedFood)
+  ) {
+    food = "corn raw";
+    normalizedFood =
+      normalizeText(food);
+  }
 
   if (
     /\bapples?\b/.test(normalizedFood) &&
