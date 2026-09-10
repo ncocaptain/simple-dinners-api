@@ -1193,6 +1193,34 @@ function countPortionTerms(
     return ["quantity not specified"];
   }
 
+  // USDA FNDDS provides an explicit unsized "1 fruit"
+  // portion for raw lemon. Treat preparation wording such as
+  // "1 lemon, cut into wedges" as one whole fruit, but do not
+  // turn an ingredient measured directly in lemon wedges into
+  // whole lemons.
+  const lemonOriginal =
+    normalizeText(
+      ingredient?.original,
+    );
+
+  if (
+    !unit &&
+    /\blemons?\b/.test(text) &&
+    !/\b(?:juice|zest|peel)\b/.test(
+      text,
+    ) &&
+    (
+      !/\blemon wedges?\b/.test(
+        lemonOriginal,
+      ) ||
+      /\bcut into wedges?\b/.test(
+        lemonOriginal,
+      )
+    )
+  ) {
+    return ["fruit"];
+  }
+
   // USDA FNDDS and SR Legacy both provide a 905 g
   // "1 fruit" portion for raw pineapple.
   if (
@@ -2848,6 +2876,9 @@ const FOOD_IDENTITY_IGNORED_TOKENS =
     "thinly",
     "finely",
     "roughly",
+    "into",
+    "wedge",
+    "wedges",
     "ripe",
     "halved",
     "cored",
@@ -4467,6 +4498,33 @@ function ingredientSearchQuery(
     normalizeText(
       ingredient?.original,
     );
+
+  // A counted whole lemon can use USDA FNDDS's explicit
+  // unsized 1-fruit portion. Keep lemon juice, zest, peel, and
+  // directly measured lemon wedges on their separate paths.
+  if (
+    /\blemons?\b/.test(normalizedFood) &&
+    Number.isFinite(
+      Number(ingredient?.quantity),
+    ) &&
+    Number(ingredient?.quantity) > 0 &&
+    !ingredient?.unit &&
+    !/\b(?:juice|zest|peel)\b/.test(
+      originalIngredient,
+    ) &&
+    (
+      !/\blemon wedges?\b/.test(
+        originalIngredient,
+      ) ||
+      /\bcut into wedges?\b/.test(
+        originalIngredient,
+      )
+    )
+  ) {
+    food = "lemon raw";
+    normalizedFood =
+      normalizeText(food);
+  }
 
   // A plain carrot ingredient normally represents fresh/raw
   // carrot at the point it is measured. Steer that case away
