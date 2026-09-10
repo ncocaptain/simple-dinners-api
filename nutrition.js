@@ -732,6 +732,34 @@ function portionContextAdjustment(
     adjustment -= 100;
   }
 
+  // When a recipe specifies a preparation shape, prefer a
+  // USDA household portion that preserves that shape. This only
+  // adjusts candidates that already match the requested volume
+  // unit, so "1 cup sliced carrots" can prefer "cup strips or
+  // slices" without treating an individual slice as one cup.
+  const wantsSliced =
+    /\b(?:slice|sliced|slices)\b/.test(
+      ingredientText,
+    );
+
+  if (wantsSliced) {
+    if (
+      /\b(?:slice|slices|strip|strips)\b/.test(
+        portionText,
+      )
+    ) {
+      adjustment += 60;
+    }
+
+    if (
+      /\b(?:grated|shredded|chopped)\b/.test(
+        portionText,
+      )
+    ) {
+      adjustment -= 60;
+    }
+  }
+
   // Pasta cup weights vary substantially by shape.
   // Never silently use shells, elbows, penne, etc. for orzo.
   const pastaShapes = [
@@ -2817,6 +2845,9 @@ const FOOD_IDENTITY_IGNORED_TOKENS =
     "melted",
     "smashed",
     "julienned",
+    "thinly",
+    "finely",
+    "roughly",
     "ripe",
     "halved",
     "cored",
@@ -3000,6 +3031,32 @@ function foodIdentityCompatibility(
   if (
     isPlainGrapeIngredient &&
     /\bgrape leaves?\b/.test(
+      candidateDescription,
+    )
+  ) {
+    return {
+      compatible: false,
+      overlap,
+      required,
+    };
+  }
+
+  // Do not satisfy an ordinary carrot ingredient with
+  // dehydrated carrot merely because it has a convenient cup
+  // portion. Processed carrot forms must be explicitly requested.
+  const isPlainCarrotIdentity =
+    ingredientTokens.length === 1 &&
+    ingredientTokens[0] ===
+      "carrot";
+
+  if (
+    isPlainCarrotIdentity &&
+    !/\b(?:dried|dehydrated)\b/.test(
+      normalizeText(
+        ingredient?.original,
+      ),
+    ) &&
+    /\b(?:dried|dehydrated)\b/.test(
       candidateDescription,
     )
   ) {
@@ -4410,6 +4467,29 @@ function ingredientSearchQuery(
     normalizeText(
       ingredient?.original,
     );
+
+  // A plain carrot ingredient normally represents fresh/raw
+  // carrot at the point it is measured. Steer that case away
+  // from dehydrated and other processed carrot products while
+  // preserving explicitly stated forms.
+  const carrotIdentityTokens =
+    foodIdentityTokens(food);
+
+  const isPlainCarrotIngredient =
+    carrotIdentityTokens.length === 1 &&
+    carrotIdentityTokens[0] ===
+      "carrot";
+
+  if (
+    isPlainCarrotIngredient &&
+    !/\b(?:dried|dehydrated|cooked|canned|frozen|pickled)\b/.test(
+      originalIngredient,
+    )
+  ) {
+    food = "carrots raw";
+    normalizedFood =
+      normalizeText(food);
+  }
 
   if (
     normalizeUnit(
