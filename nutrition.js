@@ -185,6 +185,9 @@ function normalizeUnit(value) {
     ear: "ear",
     ears: "ear",
 
+    stalk: "stalk",
+    stalks: "stalk",
+
     piece: "piece",
     pieces: "piece",
 
