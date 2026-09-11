@@ -1303,6 +1303,19 @@ function countPortionTerms(
     return ["fruit"];
   }
 
+  // Generic hamburger buns have an explicit USDA FNDDS
+  // "1 hamburger bun" portion. Allow the parser to represent
+  // the bun either as the food itself or as the count unit.
+  if (
+    (
+      !unit ||
+      unit === "hamburger bun"
+    ) &&
+    /\bhamburger buns?\b/.test(text)
+  ) {
+    return ["hamburger bun"];
+  }
+
   // Generic hot dog buns have an explicit USDA whole-bun
   // portion. Keep this before the hot-dog rule so a bun is
   // never mistaken for the sausage itself.
@@ -1413,24 +1426,32 @@ function countPortionToGrams(
   food,
   ingredient,
 ) {
-  const quantity =
-    Number(
-      ingredient?.quantity,
-    );
-
-  if (
-    !Number.isFinite(quantity) ||
-    quantity <= 0
-  ) {
-    return null;
-  }
-
   const terms =
     countPortionTerms(
       ingredient,
     );
 
   if (!terms.length) {
+    return null;
+  }
+
+  const parsedQuantity =
+    Number(
+      ingredient?.quantity,
+    );
+
+  const quantity =
+    Number.isFinite(parsedQuantity) &&
+    parsedQuantity > 0
+      ? parsedQuantity
+      : explicitLeadingCountRangeQuantity(
+          ingredient,
+        );
+
+  if (
+    !Number.isFinite(quantity) ||
+    quantity <= 0
+  ) {
     return null;
   }
 
