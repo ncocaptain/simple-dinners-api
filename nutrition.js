@@ -1359,6 +1359,34 @@ function countPortionTerms(
     return ["small melon"];
   }
 
+  // USDA SR Legacy provides an explicit raw
+  // "1 thigh with skin" portion for ordinary bone-in,
+  // skin-on chicken thighs. Accept both parser shapes seen
+  // for the same ingredient.
+  const originalCountText =
+    normalizeText(
+      ingredient?.original,
+    );
+
+  if (
+    (
+      !unit ||
+      unit === "bone in skin on" ||
+      unit === "thigh"
+    ) &&
+    /\bchicken thighs?\b/.test(
+      originalCountText,
+    ) &&
+    /\bbone in\b/.test(
+      originalCountText,
+    ) &&
+    /\bskin on\b/.test(
+      originalCountText,
+    )
+  ) {
+    return ["thigh with skin"];
+  }
+
   if (
     unit === "breast" ||
     /\bchicken breasts?\b/.test(
@@ -3099,6 +3127,43 @@ function foodIdentityCompatibility(
     };
   }
 
+  // Preserve explicit bone-in / skin-on chicken-thigh
+  // intent even when the parser moves those descriptors into
+  // the unit field or removes them from the parsed food name.
+  const chickenOriginal =
+    normalizeText(
+      ingredient?.original,
+    );
+
+  if (
+    /\bchicken thighs?\b/.test(
+      chickenOriginal,
+    ) &&
+    /\bbone in\b/.test(
+      chickenOriginal,
+    ) &&
+    /\bskin on\b/.test(
+      chickenOriginal,
+    ) &&
+    (
+      /\bboneless\b/.test(
+        candidateDescription,
+      ) ||
+      /\bskinless\b/.test(
+        candidateDescription,
+      ) ||
+      /\bskin not eaten\b/.test(
+        candidateDescription,
+      )
+    )
+  ) {
+    return {
+      compatible: false,
+      overlap,
+      required,
+    };
+  }
+
   // Do not satisfy an ordinary carrot ingredient with
   // dehydrated carrot merely because it has a convenient cup
   // portion. Processed carrot forms must be explicitly requested.
@@ -4685,6 +4750,26 @@ function ingredientSearchQuery(
     )
   ) {
     food = "green chili peppers canned";
+    normalizedFood =
+      normalizeText(food);
+  }
+
+  // Counted bone-in, skin-on chicken thighs should search
+  // the raw broiler/fryer meat-and-skin record that provides
+  // USDA's explicit "1 thigh with skin" household portion.
+  if (
+    /\bchicken thighs?\b/.test(
+      originalIngredient,
+    ) &&
+    /\bbone in\b/.test(
+      originalIngredient,
+    ) &&
+    /\bskin on\b/.test(
+      originalIngredient,
+    )
+  ) {
+    food =
+      "chicken broilers or fryers thigh meat and skin raw";
     normalizedFood =
       normalizeText(food);
   }
