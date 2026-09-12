@@ -3162,6 +3162,52 @@ function foodIdentityCompatibility(
       ingredient?.food,
     );
 
+  // Fresh basil leaves are still basil itself. USDA generic
+  // basil records may omit the word "leaves", while branded
+  // compound products such as tomatoes with basil can contain
+  // every recipe token and otherwise look more compatible.
+  const basilOriginal =
+    normalizeText(
+      ingredient?.original,
+    );
+
+  const wantsFreshBasil =
+    /\bfresh basil\b/.test(
+      basilOriginal,
+    ) &&
+    !/\b(?:pesto|dried)\b/.test(
+      basilOriginal,
+    );
+
+  if (wantsFreshBasil) {
+    if (
+      [
+        "basil raw",
+        "basil fresh",
+      ].includes(
+        candidateDescription,
+      )
+    ) {
+      return {
+        compatible: true,
+        overlap,
+        required,
+      };
+    }
+
+    if (
+      /\b(?:tomato|sauce|pesto|dressing|seasoning|spice|dried|frozen)\b/.test(
+        candidateDescription,
+      )
+    ) {
+      return {
+        compatible: false,
+        overlap,
+        required,
+      };
+    }
+  }
+
   // Plain grapes are the fruit, not grape leaves. Because the
   // shared "grape" identity token can otherwise make USDA's
   // grape-leaf record appear compatible, reject it explicitly.
@@ -4689,6 +4735,21 @@ function ingredientSearchQuery(
     normalizeText(
       ingredient?.original,
     );
+
+  // Explicit fresh basil should search the generic raw herb,
+  // not compound foods that merely contain basil.
+  if (
+    /\bfresh basil\b/.test(
+      originalIngredient,
+    ) &&
+    !/\b(?:pesto|dried)\b/.test(
+      originalIngredient,
+    )
+  ) {
+    food = "basil raw";
+    normalizedFood =
+      normalizeText(food);
+  }
 
   // A counted whole lemon can use USDA FNDDS's explicit
   // unsized 1-fruit portion. Keep lemon juice, zest, peel, and
