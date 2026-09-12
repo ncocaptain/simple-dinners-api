@@ -766,6 +766,54 @@ function portionContextAdjustment(
     }
   }
 
+  // An ordinary unsized bread slice should not silently use
+  // an unusually large bakery/French-bread portion. USDA's
+  // sourdough-inclusive French/Vienna record, for example,
+  // labels a 139 g portion simply as "slice", which is not a
+  // defensible assumption for a sandwich-style recipe.
+  const ingredientUnit =
+    normalizeUnit(
+      ingredient?.unit,
+    );
+
+  const portionGramWeight =
+    Number(
+      portion?.gramWeight,
+    );
+
+  const isUnsizedBreadSlice =
+    ingredientUnit === "slice" &&
+    /\bbread\b/.test(
+      ingredientText,
+    ) &&
+    !/\b(?:small|medium|large|thick|thin)\b/.test(
+      ingredientText,
+    );
+
+  if (
+    isUnsizedBreadSlice &&
+    /\bslice\b/.test(
+      portionText,
+    )
+  ) {
+    const portionHasExplicitBreadSliceSize =
+      /\b(?:small|medium|large|thick|thin)\b/.test(
+        portionText,
+      );
+
+    if (
+      portionHasExplicitBreadSliceSize ||
+      (
+        Number.isFinite(
+          portionGramWeight,
+        ) &&
+        portionGramWeight > 100
+      )
+    ) {
+      adjustment -= 500;
+    }
+  }
+
   // Pasta cup weights vary substantially by shape.
   // Never silently use shells, elbows, penne, etc. for orzo.
   const pastaShapes = [
@@ -3119,6 +3167,44 @@ function foodIdentityCompatibility(
     /\bgrape leaves?\b/.test(
       candidateDescription,
     )
+  ) {
+    return {
+      compatible: false,
+      overlap,
+      required,
+    };
+  }
+
+  // Bread ingredients should not silently become an assembled
+  // sandwich or a flavored/specialty bread merely because the
+  // candidate shares the word "bread". Keep ambiguous plain
+  // bread unresolved rather than inventing a subtype.
+  const isPlainBreadIngredient =
+    parsedFood === "bread";
+
+  const isSandwichBreadIngredient =
+    parsedFood === "sandwich bread";
+
+  if (
+    (
+      isPlainBreadIngredient ||
+      isSandwichBreadIngredient
+    ) &&
+    /\bsandwich\b/.test(
+      candidateDescription,
+    )
+  ) {
+    return {
+      compatible: false,
+      overlap,
+      required,
+    };
+  }
+
+  if (
+    isPlainBreadIngredient &&
+    candidateDescription !== "bread" &&
+    candidateDescription !== "bread nfs"
   ) {
     return {
       compatible: false,
