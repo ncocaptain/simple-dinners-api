@@ -188,6 +188,10 @@ function normalizeUnit(value) {
     stalk: "stalk",
     stalks: "stalk",
 
+    naan: "naan",
+    "naan bread": "naan",
+    "naan breads": "naan",
+
     piece: "piece",
     pieces: "piece",
 
@@ -1126,6 +1130,48 @@ function countPortionTerms(
         .filter(Boolean)
         .join(" "),
     );
+
+  // USDA FNDDS provides an explicit whole-Naan portion.
+  // Use it only when the recipe explicitly counts naan itself;
+  // do not choose naan for alternatives such as
+  // "2 flatbreads or naan".
+  const naanOriginal =
+    normalizeText(
+      ingredient?.original,
+    );
+
+  const naanFood =
+    normalizeText(
+      ingredient?.food,
+    );
+
+  const isExplicitNaanFood =
+    [
+      "naan",
+      "naan bread",
+    ].includes(
+      naanFood,
+    );
+
+  if (
+    (
+      unit === "naan" ||
+      (
+        unit === "bread" &&
+        isExplicitNaanFood
+      ) ||
+      (
+        !unit &&
+        isExplicitNaanFood
+      )
+    ) &&
+    /\bnaan\b/.test(text) &&
+    !/\bflatbreads?\s+or\s+naan\b/.test(
+      naanOriginal,
+    )
+  ) {
+    return ["naan"];
+  }
 
   // USDA FNDDS provides an explicit "1 regular ear" portion
   // for raw corn. Use it only when the recipe itself measures
@@ -3161,6 +3207,29 @@ function foodIdentityCompatibility(
     normalizeText(
       ingredient?.food,
     );
+
+  // Plain flatbread is not a cracker. USDA search can rank
+  // "Crackers, flatbread" for a recipe that simply asks for
+  // flatbread, but those are materially different foods.
+  const flatbreadOriginal =
+    normalizeText(
+      ingredient?.original,
+    );
+
+  if (
+    /\bflatbreads?\b/.test(
+      flatbreadOriginal,
+    ) &&
+    /\bcracker(?:s)?\b/.test(
+      candidateDescription,
+    )
+  ) {
+    return {
+      compatible: false,
+      overlap,
+      required,
+    };
+  }
 
   // Fresh basil leaves are still basil itself. USDA generic
   // basil records may omit the word "leaves", while branded
