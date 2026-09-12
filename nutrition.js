@@ -1872,6 +1872,18 @@ function normalizeCountUnit(
 function ingredientCountUnit(
   ingredient,
 ) {
+  // An explicit volume measurement must stay a volume
+  // measurement. Do not infer a count unit from food wording
+  // such as "pepperoni slices" and accidentally treat
+  // "1/2 cup" as half of one slice.
+  if (
+    volumeUnitToTablespoons(
+      ingredient?.unit,
+    )
+  ) {
+    return null;
+  }
+
   const directUnit =
     normalizeCountUnit(
       ingredient?.unit,
@@ -3005,6 +3017,7 @@ const FOOD_IDENTITY_IGNORED_TOKENS =
     "minced",
     "diced",
     "sliced",
+    "slice",
     "grated",
     "shredded",
     "cut",
