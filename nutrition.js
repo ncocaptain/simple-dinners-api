@@ -3053,6 +3053,7 @@ const FOOD_IDENTITY_IGNORED_TOKENS =
     "cooked",
     "chilled",
     "peeled",
+    "pitted",
     "quartered",
     "divided",
     "beaten",
@@ -4804,6 +4805,28 @@ function ingredientSearchQuery(
     normalizeText(
       ingredient?.original,
     );
+
+  // A counted whole avocado can use USDA FNDDS's explicit
+  // 1-fruit portion. Preparation words such as ripe, peeled,
+  // pitted, sliced, or diced do not change the whole-fruit
+  // quantity supplied by the recipe.
+  if (
+    /\bavocados?\b/.test(
+      originalIngredient,
+    ) &&
+    Number.isFinite(
+      Number(ingredient?.quantity),
+    ) &&
+    Number(ingredient?.quantity) > 0 &&
+    !ingredient?.unit &&
+    !/\bavocado oil\b/.test(
+      originalIngredient,
+    )
+  ) {
+    food = "avocado raw";
+    normalizedFood =
+      normalizeText(food);
+  }
 
   // Explicit fresh basil should search the generic raw herb,
   // not compound foods that merely contain basil.
