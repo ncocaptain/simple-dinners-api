@@ -1247,6 +1247,22 @@ function countPortionTerms(
     return ["whole"];
   }
 
+  // USDA SR Legacy provides an explicit 1-pepper portion
+  // for dried ancho chiles. Keep this specific to ancho so
+  // other dried chiles do not inherit an arbitrary pepper
+  // weight.
+  if (
+    (
+      !unit ||
+      unit === "dried"
+    ) &&
+    /\bdried ancho chiles?\b/.test(
+      text,
+    )
+  ) {
+    return ["pepper"];
+  }
+
   // USDA has both "pepper" and "1 whole" portions for
   // jalapenos.
   if (
@@ -4805,6 +4821,23 @@ function ingredientSearchQuery(
     normalizeText(
       ingredient?.original,
     );
+
+  // Explicit counted dried ancho chiles should use USDA's
+  // specific SR Legacy ancho record, which provides a true
+  // 1-pepper portion of 17 g.
+  if (
+    /\bdried ancho chiles?\b/.test(
+      originalIngredient,
+    ) &&
+    Number.isFinite(
+      Number(ingredient?.quantity),
+    ) &&
+    Number(ingredient?.quantity) > 0
+  ) {
+    food = "Peppers, ancho, dried";
+    normalizedFood =
+      normalizeText(food);
+  }
 
   // A counted whole avocado can use USDA FNDDS's explicit
   // 1-fruit portion. Preparation words such as ripe, peeled,
