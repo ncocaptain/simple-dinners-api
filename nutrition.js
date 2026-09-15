@@ -5357,6 +5357,21 @@ function coverageExclusionReason(
     return "brewing-infusion-item";
   }
 
+  // Whole bay leaves are used to flavor the dish and are
+  // normally removed before serving. Do not count the dry
+  // leaf itself as consumed nutrition. Ground or powdered bay
+  // remains eligible because it is incorporated into the food.
+  if (
+    /\bbay (?:leaf|leaves)\b/.test(
+      ingredientText,
+    ) &&
+    !/\b(?:ground|powdered?|crushed)\b/.test(
+      original,
+    )
+  ) {
+    return "whole-bay-leaf-aromatic";
+  }
+
   if (
     !hasUsableQuantity &&
     /\bcrushed ice\b/.test(
