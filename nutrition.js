@@ -1001,12 +1001,70 @@ function equivalentVolumeToGrams(
   );
 }
 
+function explicitLeadingVolumeRangeQuantity(
+  ingredient,
+) {
+  const original =
+    String(
+      ingredient?.original || "",
+    ).trim();
+
+  const match =
+    original.match(
+      /^(\d+(?:\.\d+)?)\s*(?:to|-|–|—)\s*\d+(?:\.\d+)?\s*(tsp|teaspoons?|tbsp|tablespoons?|cups?|ml|milliliters?|l|liters?|pints?|quarts?)\b/i,
+    );
+
+  if (!match) {
+    return null;
+  }
+
+  const originalUnit =
+    normalizeUnit(match[2]);
+
+  const parsedUnit =
+    normalizeUnit(
+      ingredient?.unit,
+    );
+
+  if (
+    !originalUnit ||
+    !parsedUnit ||
+    originalUnit !== parsedUnit
+  ) {
+    return null;
+  }
+
+  const lower =
+    Number(match[1]);
+
+  return (
+    Number.isFinite(lower) &&
+    lower > 0
+  )
+    ? lower
+    : null;
+}
+
+// For explicit recipe volume ranges such as
+// "1 to 2 Tbsp butter", use the stated minimum rather than
+// inventing an average, matching the existing mass/count
+// range policy.
 function portionToGrams(
   food,
   ingredient,
 ) {
+  const parsedQuantity =
+    Number(
+      ingredient?.quantity,
+    );
+
   const quantity =
-    Number(ingredient.quantity);
+    Number.isFinite(parsedQuantity) &&
+    parsedQuantity > 0
+      ? parsedQuantity
+      : explicitLeadingVolumeRangeQuantity(
+          ingredient,
+        );
 
   if (
     !Number.isFinite(quantity) ||
