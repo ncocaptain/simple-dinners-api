@@ -3253,6 +3253,26 @@ function foodIdentityCompatibility(
       ingredient?.food,
     );
 
+  // "Frozen corn" in a recipe means the frozen ingredient
+  // before cooking. USDA also returns cooked/microwaved corn
+  // and frozen compound foods such as succotash. Keep this
+  // exact ingredient limited to plain frozen, unprepared corn.
+  if (
+    parsedFood === "frozen corn" &&
+    !(
+      candidateDescription.includes("corn") &&
+      candidateDescription.includes("frozen") &&
+      candidateDescription.includes("unprepared") &&
+      !candidateDescription.includes("succotash")
+    )
+  ) {
+    return {
+      compatible: false,
+      overlap,
+      required,
+    };
+  }
+
   // The parser may move "dried" from the food name into the
   // unit field for counted ancho chiles. Preserve the original
   // recipe intent so USDA's specific dried-ancho record remains
@@ -4871,6 +4891,17 @@ function ingredientSearchQuery(
     normalizedFood === "burger bun"
   ) {
     food = "hamburger bun";
+    normalizedFood =
+      normalizeText(food);
+  }
+
+  // Exact frozen corn should resolve against USDA's plain
+  // frozen, unprepared corn rather than cooked or microwaved
+  // versions of the ingredient.
+  if (
+    normalizedFood === "frozen corn"
+  ) {
+    food = "corn sweet frozen unprepared";
     normalizedFood =
       normalizeText(food);
   }
