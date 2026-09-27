@@ -3225,6 +3225,29 @@ function foodIdentityCompatibility(
       ingredient?.food,
     );
 
+  // The parser may move "dried" from the food name into the
+  // unit field for counted ancho chiles. Preserve the original
+  // recipe intent so USDA's specific dried-ancho record remains
+  // identity-compatible in either parser shape.
+  const anchoOriginal =
+    normalizeText(
+      ingredient?.original,
+    );
+
+  if (
+    /\bdried ancho chiles?\b/.test(
+      anchoOriginal,
+    ) &&
+    candidateDescription ===
+      "peppers ancho dried"
+  ) {
+    return {
+      compatible: true,
+      overlap,
+      required,
+    };
+  }
+
   // Plain flatbread is not a cracker. USDA search can rank
   // "Crackers, flatbread" for a recipe that simply asks for
   // flatbread, but those are materially different foods.
