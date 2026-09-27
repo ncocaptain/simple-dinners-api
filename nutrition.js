@@ -402,6 +402,28 @@ function packageSizeToGrams(
       ingredient?.unit,
     );
 
+  // A can or jar's listed package weight can include packing
+  // liquid that the recipe explicitly discards. Do not count
+  // that full package weight when the ingredient is drained or
+  // rinsed; later USDA portion logic may still resolve an
+  // appropriate edible amount if one is available.
+  const original =
+    normalizeText(
+      ingredient?.original,
+    );
+
+  if (
+    [
+      "can",
+      "jar",
+    ].includes(ingredientUnit) &&
+    /\b(?:drained|rinsed)\b/.test(
+      original,
+    )
+  ) {
+    return null;
+  }
+
   const canUseParentheticalPackageMass =
     [
       "can",
