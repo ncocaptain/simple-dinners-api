@@ -172,6 +172,10 @@ function normalizeUnit(value) {
     cup: "cup",
     cups: "cup",
 
+    pt: "pint",
+    pint: "pint",
+    pints: "pint",
+
     qt: "quart",
     quart: "quart",
     quarts: "quart",
@@ -715,6 +719,27 @@ function portionContextAdjustment(
 
   let adjustment = 0;
 
+  const wantsCherryTomatoes =
+    /\bcherry tomatoes?\b/.test(
+      ingredientText,
+    );
+
+  if (wantsCherryTomatoes) {
+    if (
+      /\bcup cherry tomatoes?\b/.test(
+        portionText,
+      )
+    ) {
+      adjustment += 100;
+    } else if (
+      /\bcup\b/.test(
+        portionText,
+      )
+    ) {
+      adjustment -= 100;
+    }
+  }
+
   // Do not use a whipped measurement for fluid cream
   // unless the recipe actually calls for whipped cream.
   if (
@@ -892,6 +917,9 @@ function volumeUnitToTablespoons(
   switch (normalizeUnit(unit)) {
     case "quart":
       return 64;
+
+    case "pint":
+      return 32;
 
     case "cup":
       return 16;
@@ -3353,6 +3381,23 @@ function foodIdentityCompatibility(
     };
   }
 
+  // USDA's generic raw red-tomato record contains an explicit
+  // "cup cherry tomatoes" household portion even though its food
+  // description itself does not contain the word "cherry".
+  if (
+    ingredientTokens.length === 2 &&
+    ingredientTokens[0] === "cherry" &&
+    ingredientTokens[1] === "tomato" &&
+    candidateDescription ===
+      "tomatoes red ripe raw year round average"
+  ) {
+    return {
+      compatible: true,
+      overlap,
+      required,
+    };
+  }
+
   // The parser may move "dried" from the food name into the
   // unit field for counted ancho chiles. Preserve the original
   // recipe intent so USDA's specific dried-ancho record remains
@@ -4982,6 +5027,25 @@ function ingredientSearchQuery(
     normalizedFood === "frozen corn"
   ) {
     food = "corn sweet frozen unprepared";
+    normalizedFood =
+      normalizeText(food);
+  }
+
+  // USDA searches for "cherry tomatoes" are dominated by
+  // branded records with highly variable household servings.
+  // The generic SR Legacy raw-tomato record includes a specific
+  // "cup cherry tomatoes" portion, so steer this exact ingredient
+  // toward that generic record.
+  const cherryTomatoIdentityTokens =
+    foodIdentityTokens(food);
+
+  if (
+    cherryTomatoIdentityTokens.length === 2 &&
+    cherryTomatoIdentityTokens[0] === "cherry" &&
+    cherryTomatoIdentityTokens[1] === "tomato"
+  ) {
+    food =
+      "tomatoes red ripe raw year round average";
     normalizedFood =
       normalizeText(food);
   }
