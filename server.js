@@ -48,9 +48,9 @@ import {
 const app = Fastify({ logger: true });
 await app.register(multipart, {
   limits: {
-    files: 5,
+    files: 8,
     fileSize: 8 * 1024 * 1024,
-    parts: 10,
+    parts: 16,
   },
 });
 app.addHook("onRequest", async (request, reply) => {
