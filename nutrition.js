@@ -1417,14 +1417,26 @@ function countPortionTerms(
   }
 
   // Generic hamburger buns have an explicit USDA FNDDS
-  // "1 hamburger bun" portion. Allow the parser to represent
-  // the bun either as the food itself or as the count unit.
+  // "1 hamburger bun" portion. Plain "burger bun" is common
+  // equivalent recipe wording, but keep this exact so enriched
+  // buns such as brioche do not inherit a white-bun weight.
+  const bunFood =
+    normalizeText(
+      ingredient?.food,
+    );
+
   if (
     (
-      !unit ||
-      unit === "hamburger bun"
-    ) &&
-    /\bhamburger buns?\b/.test(text)
+      (
+        !unit ||
+        unit === "hamburger bun"
+      ) &&
+      /\bhamburger buns?\b/.test(text)
+    ) ||
+    (
+      unit === "bun" &&
+      bunFood === "burger bun"
+    )
   ) {
     return ["hamburger bun"];
   }
@@ -3264,6 +3276,26 @@ function foodIdentityCompatibility(
     };
   }
 
+  // Treat exact plain "burger bun" as equivalent to USDA's
+  // generic white hamburger bun. Do not extend this to brioche
+  // or other specifically described buns.
+  const burgerBunFood =
+    normalizeText(
+      ingredient?.food,
+    );
+
+  if (
+    burgerBunFood === "burger bun" &&
+    candidateDescription ===
+      "roll white hamburger bun"
+  ) {
+    return {
+      compatible: true,
+      overlap,
+      required,
+    };
+  }
+
   // Plain flatbread is not a cracker. USDA search can rank
   // "Crackers, flatbread" for a recipe that simply asks for
   // flatbread, but those are materially different foods.
@@ -4828,6 +4860,17 @@ function ingredientSearchQuery(
     normalizedFood === "hot dog"
   ) {
     food = "hot dog NFS";
+    normalizedFood =
+      normalizeText(food);
+  }
+
+  // Plain "burger bun" is equivalent recipe wording for a
+  // generic hamburger bun. Keep modifiers such as brioche
+  // distinct rather than assigning them a white-bun weight.
+  if (
+    normalizedFood === "burger bun"
+  ) {
+    food = "hamburger bun";
     normalizedFood =
       normalizeText(food);
   }
