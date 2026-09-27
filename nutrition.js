@@ -5079,6 +5079,30 @@ function ingredientSearchQuery(
       ingredient?.original,
     );
 
+  // When canned chickpeas are explicitly drained and rinsed,
+  // search USDA for that prepared state. SR Legacy provides a
+  // true drained/rinsed can portion, while more generic chickpea
+  // records may only provide a RACC or unrelated serving.
+  if (
+    normalizeUnit(
+      ingredient?.unit,
+    ) === "can" &&
+    /\bchickpeas?\b/.test(
+      originalIngredient,
+    ) &&
+    /\bdrained\b/.test(
+      originalIngredient,
+    ) &&
+    /\brinsed\b/.test(
+      originalIngredient,
+    )
+  ) {
+    food =
+      "chickpeas mature seeds canned drained rinsed tap water";
+    normalizedFood =
+      normalizeText(food);
+  }
+
   // Explicit counted dried ancho chiles should use USDA's
   // specific SR Legacy ancho record, which provides a true
   // 1-pepper portion of 17 g.
