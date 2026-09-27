@@ -1558,6 +1558,22 @@ function strictCountPortionScore(
     ) {
       return 120;
     }
+
+    // USDA FNDDS describes a whole naan as
+    // "1 Naan (10\" dia)". Keep this exception specific to
+    // naan so qualified size text does not broadly loosen
+    // count matching for generic terms such as "piece".
+    if (
+      normalizedTerm === "naan" &&
+      directFields.some(
+        field =>
+          /^1 naan(?:\s|$)/.test(
+            field,
+          ),
+      )
+    ) {
+      return 120;
+    }
   }
 
   return 0;
