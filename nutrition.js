@@ -3553,6 +3553,11 @@ function foodIdentityCompatibility(
     ) &&
     /\bsandwich\b/.test(
       candidateDescription,
+    ) &&
+    !(
+      isSandwichBreadIngredient &&
+      candidateDescription ===
+        "sandwich bread"
     )
   ) {
     return {
