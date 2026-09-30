@@ -1448,14 +1448,20 @@ function countPortionTerms(
   // USDA FNDDS and SR Legacy both provide a 905 g
   // "1 fruit" portion for raw pineapple.
   if (
-    !unit &&
+    (
+      !unit ||
+      unit === "fresh"
+    ) &&
     /\bpineapples?\b/.test(text)
   ) {
     return ["fruit"];
   }
 
   if (
-    !unit &&
+    (
+      !unit ||
+      unit === "ripe"
+    ) &&
     /\bavocados?\b/.test(text)
   ) {
     return ["fruit"];
@@ -1542,8 +1548,14 @@ function countPortionTerms(
       /\bhamburger buns?\b/.test(text)
     ) ||
     (
-      unit === "bun" &&
-      bunFood === "burger bun"
+      (
+        !unit ||
+        unit === "bun"
+      ) &&
+      [
+        "burger bun",
+        "burger buns",
+      ].includes(bunFood)
     )
   ) {
     return ["hamburger bun"];
@@ -3430,7 +3442,12 @@ function foodIdentityCompatibility(
     );
 
   if (
-    burgerBunFood === "burger bun" &&
+    [
+      "burger bun",
+      "burger buns",
+    ].includes(
+      burgerBunFood,
+    ) &&
     candidateDescription ===
       "roll white hamburger bun"
   ) {
@@ -5018,7 +5035,12 @@ function ingredientSearchQuery(
   // generic hamburger bun. Keep modifiers such as brioche
   // distinct rather than assigning them a white-bun weight.
   if (
-    normalizedFood === "burger bun"
+    [
+      "burger bun",
+      "burger buns",
+    ].includes(
+      normalizedFood,
+    )
   ) {
     food = "hamburger bun";
     normalizedFood =
@@ -5137,7 +5159,14 @@ function ingredientSearchQuery(
       Number(ingredient?.quantity),
     ) &&
     Number(ingredient?.quantity) > 0 &&
-    !ingredient?.unit &&
+    (
+      !normalizeUnit(
+        ingredient?.unit,
+      ) ||
+      normalizeUnit(
+        ingredient?.unit,
+      ) === "ripe"
+    ) &&
     !/\bavocado oil\b/.test(
       originalIngredient,
     )
@@ -5250,7 +5279,14 @@ function ingredientSearchQuery(
       Number(ingredient?.quantity),
     ) &&
     Number(ingredient?.quantity) > 0 &&
-    !ingredient?.unit
+    (
+      !normalizeUnit(
+        ingredient?.unit,
+      ) ||
+      normalizeUnit(
+        ingredient?.unit,
+      ) === "fresh"
+    )
   ) {
     food = "pineapple raw";
     normalizedFood =
