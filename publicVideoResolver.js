@@ -2,6 +2,9 @@ import { chromium } from "playwright";
 import ffmpegPath from "ffmpeg-static";
 import { spawn } from "node:child_process";
 import {
+  createWriteStream,
+} from "node:fs";
+import {
   mkdir,
   mkdtemp,
   rm,
@@ -9,6 +12,12 @@ import {
 } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import {
+  pipeline,
+} from "node:stream/promises";
+import {
+  Readable,
+} from "node:stream";
 
 const DEFAULT_NAVIGATION_TIMEOUT_MS = 45_000;
 const DEFAULT_DISCOVERY_WAIT_MS = 6_000;
@@ -188,6 +197,671 @@ function classifyInstagramMedia(rawUrl) {
 
     encodingTag,
   };
+}
+
+const INSTAGRAM_BROWSER_AGENT =
+  "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) " +
+  "AppleWebKit/537.36 (KHTML, like Gecko) " +
+  "Chrome/150.0.0.0 Safari/537.36";
+
+function getInstagramShortcode(rawUrl) {
+  try {
+    const parsed = new URL(rawUrl);
+
+    return (
+      parsed.pathname.match(
+        /^\/(?:reel|reels|p)\/([^/?#]+)/
+      )?.[1] || ""
+    );
+  } catch {
+    return "";
+  }
+}
+
+function extractBalancedJson(
+  text,
+  start
+) {
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+
+  for (
+    let i = start;
+    i < text.length;
+    i++
+  ) {
+    const ch = text[i];
+
+    if (inString) {
+      if (escaped) {
+        escaped = false;
+      } else if (ch === "\\") {
+        escaped = true;
+      } else if (ch === '"') {
+        inString = false;
+      }
+
+      continue;
+    }
+
+    if (ch === '"') {
+      inString = true;
+    } else if (ch === "{") {
+      depth++;
+    } else if (ch === "}") {
+      depth--;
+
+      if (depth === 0) {
+        return text.slice(
+          start,
+          i + 1
+        );
+      }
+    }
+  }
+
+  return null;
+}
+
+function extractInstagramEmbedMedia(html) {
+  const contextKey =
+    '"contextJSON":';
+
+  let searchFrom = 0;
+
+  while (true) {
+    const index =
+      html.indexOf(
+        contextKey,
+        searchFrom
+      );
+
+    if (index === -1) {
+      break;
+    }
+
+    const quoteStart =
+      html.indexOf(
+        '"',
+        index +
+          contextKey.length
+      );
+
+    if (quoteStart === -1) {
+      break;
+    }
+
+    let i =
+      quoteStart + 1;
+    let escaped = false;
+
+    for (
+      ;
+      i < html.length;
+      i++
+    ) {
+      const ch = html[i];
+
+      if (escaped) {
+        escaped = false;
+      } else if (ch === "\\") {
+        escaped = true;
+      } else if (ch === '"') {
+        break;
+      }
+    }
+
+    searchFrom = i + 1;
+
+    const token =
+      html.slice(
+        quoteStart,
+        i + 1
+      );
+
+    try {
+      const inner =
+        JSON.parse(token);
+
+      const payload =
+        JSON.parse(inner);
+
+      const media =
+        payload?.gql_data
+          ?.shortcode_media ||
+        payload?.context
+          ?.media;
+
+      if (media) {
+        return media;
+      }
+    } catch {
+      // Try the next contextJSON blob.
+    }
+  }
+
+  const rawKey =
+    '"shortcode_media":';
+
+  const rawIndex =
+    html.indexOf(rawKey);
+
+  if (rawIndex !== -1) {
+    const braceStart =
+      html.indexOf(
+        "{",
+        rawIndex +
+          rawKey.length
+      );
+
+    if (braceStart !== -1) {
+      const raw =
+        extractBalancedJson(
+          html,
+          braceStart
+        );
+
+      if (raw) {
+        try {
+          return JSON.parse(raw);
+        } catch {
+          // Ignore malformed fallback.
+        }
+      }
+    }
+  }
+
+  return null;
+}
+
+function instagramEmbedContainsVideo(media) {
+  if (media?.is_video) {
+    return true;
+  }
+
+  return Boolean(
+    media
+      ?.edge_sidecar_to_children
+      ?.edges
+      ?.some(
+        (edge) =>
+          edge?.node?.is_video
+      )
+  );
+}
+
+function getInstagramEmbedVideoUrl(media) {
+  if (media?.video_url) {
+    return media.video_url;
+  }
+
+  const videoChild =
+    media
+      ?.edge_sidecar_to_children
+      ?.edges
+      ?.map(
+        (edge) =>
+          edge?.node
+      )
+      ?.find(
+        (node) =>
+          node?.is_video &&
+          node?.video_url
+      );
+
+  return (
+    videoChild?.video_url ||
+    ""
+  );
+}
+
+function getInstagramEmbedCaption(media) {
+  return String(
+    media
+      ?.edge_media_to_caption
+      ?.edges?.[0]
+      ?.node?.text ||
+      ""
+  ).trim();
+}
+
+async function inspectDownloadedMedia(
+  filePath,
+  {
+    timeoutMs =
+      20_000,
+  } = {}
+) {
+  const result =
+    await runProcess(
+      requireFfmpegPath(),
+      [
+        "-hide_banner",
+        "-i",
+        filePath,
+        "-t",
+        "0.25",
+        "-f",
+        "null",
+        "-",
+      ],
+      {
+        timeoutMs,
+      }
+    );
+
+  return {
+    hasVideo:
+      /Stream #.*Video:/i.test(
+        result.stderr
+      ),
+
+    hasAudio:
+      /Stream #.*Audio:/i.test(
+        result.stderr
+      ),
+
+    videoCodec:
+      result.stderr.match(
+        /Stream #.*Video:\s*([^,\s]+)/i
+      )?.[1] || "",
+
+    audioCodec:
+      result.stderr.match(
+        /Stream #.*Audio:\s*([^,\s]+)/i
+      )?.[1] || "",
+  };
+}
+
+async function downloadPublicInstagramVideo(
+  mediaUrl,
+  {
+    sourceUrl,
+    outputPath,
+    maxOutputBytes,
+  }
+) {
+  const response =
+    await fetch(
+      mediaUrl,
+      {
+        headers: {
+          "User-Agent":
+            INSTAGRAM_BROWSER_AGENT,
+          Referer:
+            sourceUrl,
+        },
+        redirect:
+          "follow",
+      }
+    );
+
+  if (!response.ok) {
+    throw createResolverError(
+      `Instagram public video answered ${response.status}.`,
+      "PUBLIC_INSTAGRAM_DOWNLOAD_FAILED"
+    );
+  }
+
+  const contentType =
+    String(
+      response.headers.get(
+        "content-type"
+      ) || ""
+    ).toLowerCase();
+
+  if (
+    !contentType.startsWith(
+      "video/"
+    )
+  ) {
+    throw createResolverError(
+      `Instagram returned ${contentType || "an unknown content type"} instead of video.`,
+      "PUBLIC_INSTAGRAM_WRONG_MEDIA_TYPE"
+    );
+  }
+
+  const contentLength =
+    Number(
+      response.headers.get(
+        "content-length"
+      ) || 0
+    );
+
+  if (
+    contentLength > 0 &&
+    contentLength >
+      maxOutputBytes
+  ) {
+    throw createResolverError(
+      "The resolved Instagram video is larger than the supported limit.",
+      "PUBLIC_VIDEO_TOO_LARGE"
+    );
+  }
+
+  if (!response.body) {
+    throw createResolverError(
+      "Instagram returned an empty video response.",
+      "PUBLIC_VIDEO_EMPTY"
+    );
+  }
+
+  await mkdir(
+    path.dirname(outputPath),
+    {
+      recursive: true,
+    }
+  );
+
+  await pipeline(
+    Readable.fromWeb(
+      response.body
+    ),
+    createWriteStream(
+      outputPath
+    )
+  );
+
+  const outputStats =
+    await stat(outputPath);
+
+  if (
+    !outputStats.isFile() ||
+    outputStats.size === 0
+  ) {
+    throw createResolverError(
+      "The resolved Instagram video was empty.",
+      "PUBLIC_VIDEO_EMPTY"
+    );
+  }
+
+  if (
+    outputStats.size >
+    maxOutputBytes
+  ) {
+    throw createResolverError(
+      "The resolved Instagram video is larger than the supported limit.",
+      "PUBLIC_VIDEO_TOO_LARGE"
+    );
+  }
+
+  return outputStats;
+}
+
+async function tryResolveInstagramPublicEmbed(
+  sourceUrl,
+  {
+    workspaceDir,
+    processTimeoutMs,
+    maxOutputBytes,
+  }
+) {
+  const shortcode =
+    getInstagramShortcode(
+      sourceUrl
+    );
+
+  if (!shortcode) {
+    return null;
+  }
+
+  const embedUrl =
+    `https://www.instagram.com/p/${shortcode}/embed/captioned/`;
+
+  const controller =
+    new AbortController();
+
+  const timeout =
+    setTimeout(
+      () =>
+        controller.abort(),
+      12_000
+    );
+
+  let response;
+
+  try {
+    response =
+      await fetch(
+        embedUrl,
+        {
+          headers: {
+            "User-Agent":
+              INSTAGRAM_BROWSER_AGENT,
+            Accept:
+              "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            "Accept-Language":
+              "en-US,en;q=0.9",
+            "Sec-Fetch-Dest":
+              "document",
+            "Sec-Fetch-Mode":
+              "navigate",
+            "Sec-Fetch-Site":
+              "none",
+          },
+          redirect:
+            "follow",
+          signal:
+            controller.signal,
+        }
+      );
+  } catch (error) {
+    console.warn(
+      "Instagram public embed preflight failed:",
+      error instanceof Error
+        ? error.message
+        : String(error)
+    );
+
+    return null;
+  } finally {
+    clearTimeout(timeout);
+  }
+
+  if (!response.ok) {
+    return null;
+  }
+
+  const html =
+    await response.text();
+
+  if (!html) {
+    return null;
+  }
+
+  const declaredType =
+    html.match(
+      /data-media-type="([^"]+)"/
+    )?.[1] || "";
+
+  const media =
+    extractInstagramEmbedMedia(
+      html
+    );
+
+  if (!media) {
+    return null;
+  }
+
+  const containsVideo =
+    instagramEmbedContainsVideo(
+      media
+    );
+
+  // A normal image/carousel post should fall through to
+  // the regular recipe importer immediately instead of
+  // paying the Chromium video-resolution cost.
+  if (
+    !containsVideo &&
+    declaredType !==
+      "GraphVideo"
+  ) {
+    const error =
+      createResolverError(
+        "That Instagram post does not contain a public video.",
+        "PUBLIC_INSTAGRAM_NOT_VIDEO"
+      );
+
+    error.skipBrowserFallback =
+      true;
+
+    error.publicEmbed = {
+      declaredType,
+      captionLength:
+        getInstagramEmbedCaption(
+          media
+        ).length,
+    };
+
+    throw error;
+  }
+
+  const mediaUrl =
+    getInstagramEmbedVideoUrl(
+      media
+    );
+
+  if (!mediaUrl) {
+    return null;
+  }
+
+  if (
+    !isAllowedInstagramMediaUrl(
+      mediaUrl
+    )
+  ) {
+    return null;
+  }
+
+  const outputPath =
+    path.join(
+      workspaceDir,
+      "resolved-instagram-video.mp4"
+    );
+
+  try {
+    const outputStats =
+      await downloadPublicInstagramVideo(
+        mediaUrl,
+        {
+          sourceUrl,
+          outputPath,
+          maxOutputBytes,
+        }
+      );
+
+    const streamInfo =
+      await inspectDownloadedMedia(
+        outputPath,
+        {
+          timeoutMs:
+            Math.min(
+              processTimeoutMs,
+              20_000
+            ),
+        }
+      );
+
+    if (
+      !streamInfo.hasVideo
+    ) {
+      await rm(
+        outputPath,
+        {
+          force: true,
+        }
+      );
+
+      return null;
+    }
+
+    // If the public embed gave us a video-only rendition,
+    // let the existing browser resolver look for a separate
+    // audio track rather than silently losing spoken recipe
+    // instructions.
+    if (
+      !streamInfo.hasAudio
+    ) {
+      await rm(
+        outputPath,
+        {
+          force: true,
+        }
+      );
+
+      return null;
+    }
+
+    const classification =
+      classifyInstagramMedia(
+        mediaUrl
+      );
+
+    return {
+      platform:
+        "instagram",
+      sourceUrl,
+      outputPath,
+      sizeBytes:
+        outputStats.size,
+      hasAudio: true,
+      durationSeconds:
+        Number(
+          classification
+            .durationSeconds ||
+          media?.video_duration ||
+          0
+        ),
+      candidateCount: 1,
+      uniqueTrackCount: 1,
+      videoTrack: {
+        bitrate:
+          classification.bitrate,
+        encodingTag:
+          classification.encodingTag,
+      },
+      audioTrack: {
+        bitrate: 0,
+        encodingTag:
+          streamInfo.audioCodec ||
+          "muxed",
+      },
+      resolver:
+        "public-embed",
+      publicEmbed: {
+        declaredType,
+        captionLength:
+          getInstagramEmbedCaption(
+            media
+          ).length,
+        videoCodec:
+          streamInfo.videoCodec,
+        audioCodec:
+          streamInfo.audioCodec,
+      },
+    };
+  } catch (error) {
+    console.warn(
+      "Instagram public embed video path failed; falling back to browser resolver:",
+      error instanceof Error
+        ? error.message
+        : String(error)
+    );
+
+    try {
+      await rm(
+        outputPath,
+        {
+          force: true,
+        }
+      );
+    } catch {
+      // Ignore cleanup failure.
+    }
+
+    return null;
+  }
 }
 
 function runProcess(
@@ -912,6 +1586,59 @@ export async function resolvePublicVideoToFile(
       "A public video resolver workspace is required.",
       "PUBLIC_VIDEO_WORKSPACE_REQUIRED"
     );
+  }
+
+  let publicEmbedResult = null;
+
+  try {
+    publicEmbedResult =
+      await tryResolveInstagramPublicEmbed(
+        sourceUrl,
+        {
+          workspaceDir,
+          processTimeoutMs,
+          maxOutputBytes,
+        }
+      );
+  } catch (error) {
+    if (
+      error?.skipBrowserFallback
+    ) {
+      throw error;
+    }
+
+    console.warn(
+      "Instagram public embed resolver failed:",
+      error instanceof Error
+        ? error.message
+        : String(error)
+    );
+  }
+
+  if (publicEmbedResult) {
+    console.log(
+      "Instagram public embed resolver succeeded:",
+      {
+        sizeBytes:
+          publicEmbedResult.sizeBytes,
+        durationSeconds:
+          publicEmbedResult.durationSeconds,
+        captionLength:
+          publicEmbedResult
+            .publicEmbed
+            ?.captionLength || 0,
+        videoCodec:
+          publicEmbedResult
+            .publicEmbed
+            ?.videoCodec || "",
+        audioCodec:
+          publicEmbedResult
+            .publicEmbed
+            ?.audioCodec || "",
+      }
+    );
+
+    return publicEmbedResult;
   }
 
   const inspection =
