@@ -33,7 +33,12 @@ import {
 } from "./facebookVideoResolver.js";
 
 import {
+  resolveFacebookPublicUrl,
+} from "./facebookPublicPluginResolver.js";
+
+import {
   persistImportedRecipeImage,
+  persistUploadedRecipeImage,
 } from "./importedRecipeImageStore.js";
 import {
   analyzeRecipeNutrition,
@@ -174,6 +179,109 @@ const SCREENSHOT_MIME_TYPES = new Set([
 ]);
 
 const MAX_SCREENSHOT_TOTAL_BYTES = 25 * 1024 * 1024;
+
+// =====================================================
+// POST /upload-recipe-image
+// Persist an optional user-selected cover photo for a
+// normal URL/social recipe import.
+// =====================================================
+
+app.post("/upload-recipe-image", async (request, reply) => {
+  if (!request.isMultipart()) {
+    return reply.code(415).send({
+      success: false,
+      error: "Recipe image uploads must use multipart/form-data.",
+    });
+  }
+
+  let uploadedImage = null;
+
+  try {
+    for await (const part of request.parts()) {
+      if (part.type !== "file") {
+        continue;
+      }
+
+      if (
+        part.fieldname !== "image" ||
+        uploadedImage
+      ) {
+        part.file.resume();
+        continue;
+      }
+
+      if (
+        !SCREENSHOT_MIME_TYPES.has(
+          String(part.mimetype || "").toLowerCase()
+        )
+      ) {
+        part.file.resume();
+
+        return reply.code(415).send({
+          success: false,
+          error:
+            "Please choose a JPEG, PNG, or WebP recipe image.",
+        });
+      }
+
+      const buffer = await part.toBuffer();
+
+      uploadedImage = {
+        buffer,
+        mimetype: part.mimetype || "",
+      };
+    }
+
+    if (!uploadedImage) {
+      return reply.code(400).send({
+        success: false,
+        error: "Choose a recipe image first.",
+      });
+    }
+
+    const photoUrl =
+      await persistUploadedRecipeImage(
+        uploadedImage.buffer,
+        uploadedImage.mimetype
+      );
+
+    return {
+      success: true,
+      photoUrl,
+    };
+  } catch (error) {
+    const statusCode =
+      Number(error?.statusCode) || 500;
+
+    const errorCode =
+      String(error?.code || "");
+
+    const errorMessage =
+      error instanceof Error
+        ? error.message
+        : String(error);
+
+    const uploadLimitReached =
+      statusCode === 413 ||
+      errorCode.includes("LIMIT") ||
+      errorCode.includes("TOO_LARGE") ||
+      errorMessage.includes("exceeds");
+
+    console.error(
+      "Recipe image upload failed:",
+      errorMessage
+    );
+
+    return reply
+      .code(uploadLimitReached ? 413 : 500)
+      .send({
+        success: false,
+        error: uploadLimitReached
+          ? "That image is larger than 8 MB. Choose a smaller image."
+          : "Simple Dinners could not save that recipe image.",
+      });
+  }
+});
 
 app.get("/", async () => {
   return {
@@ -595,8 +703,42 @@ app.post("/import-recipe", async (request, reply) => {
 
   const startedAt = Date.now();
 
+  const originalImportUrl =
+    importUrl;
+
+  if (
+    isFacebookRecipeUrl(
+      importUrl
+    )
+  ) {
+    const resolvedFacebookUrl =
+      await resolveFacebookPublicUrl(
+        importUrl
+      );
+
+    if (
+      resolvedFacebookUrl &&
+      resolvedFacebookUrl !==
+        importUrl
+    ) {
+      console.log(
+        "Resolved Facebook share link before import:",
+        {
+          originalUrl:
+            importUrl,
+          resolvedUrl:
+            resolvedFacebookUrl,
+        }
+      );
+
+      importUrl =
+        resolvedFacebookUrl;
+    }
+  }
+
   console.log("Using Simple Dinners API importer:", {
     originalUrl: url,
+    originalImportUrl,
     importUrl,
     resolvedFromPinterest,
     pinterestInputUrl,
@@ -722,9 +864,40 @@ app.post("/import-recipe", async (request, reply) => {
     // Used only when fast extraction fails, is blocked, or returns weak metadata.
     // -----------------------------------------------------
 
-    if (!shouldUseFastImportResult(firstResult)) {
+    const canSkipInitialFacebookPlaywright =
+      isFacebookRecipeUrl(importUrl) &&
+      firstResult?.success &&
+      firstResult?.recipe &&
+      firstResult.successLevel ===
+        "social-metadata-only";
+
+    if (
+      canSkipInitialFacebookPlaywright
+    ) {
+      firstResult.debug = {
+        ...(firstResult.debug || {}),
+        facebookInitialPlaywrightSkipped:
+          true,
+        facebookInitialPlaywrightSkipReason:
+          "social-metadata-can-use-video-rescue",
+      };
+
+      console.log(
+        "Skipping initial Facebook Playwright extraction; continuing to caption/video rescue."
+      );
+    }
+
+    if (
+      !shouldUseFastImportResult(
+        firstResult
+      ) &&
+      !canSkipInitialFacebookPlaywright
+    ) {
       await ensureHeavyImportSlot();
-      firstResult = await runPlaywrightExtraction(importUrl);
+      firstResult =
+        await runPlaywrightExtraction(
+          importUrl
+        );
     }
 
     if (!firstResult) {
@@ -2081,11 +2254,27 @@ function extractJsonLdBlocksFromHtml(html) {
 }
 
 async function fetchAndExtractRecipe(url) {
+  const useFacebookCrawler =
+    isFacebookRecipeUrl(
+      url
+    );
+
+  if (useFacebookCrawler) {
+    console.log(
+      "Using Facebook crawler view for fast extraction:",
+      {
+        url,
+      }
+    );
+  }
+
   const response = await fetch(url, {
     method: "GET",
     headers: {
       "User-Agent":
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+        useFacebookCrawler
+          ? "facebookexternalhit/1.1 (+http://www.facebook.com/externalhit_uatext.php)"
+          : "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
       Accept:
         "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
       "Accept-Language": "en-US,en;q=0.9",
@@ -2263,6 +2452,25 @@ function normalizeImportUrl(rawUrl) {
     return candidate || "";
   }
 }
+function isFacebookRecipeUrl(url) {
+  try {
+    const hostname = new URL(
+      String(url || "").trim()
+    ).hostname
+      .toLowerCase()
+      .replace(/\.$/, "");
+
+    return (
+      hostname === "facebook.com" ||
+      hostname.endsWith(".facebook.com") ||
+      hostname === "fb.watch" ||
+      hostname.endsWith(".fb.watch")
+    );
+  } catch {
+    return false;
+  }
+}
+
 function isSocialRecipeUrl(url) {
   const value = String(url || "").toLowerCase();
 
@@ -3049,12 +3257,14 @@ function looksLikeRecipeCaption(text) {
   if (value.length < 120) return false;
 
   const hasIngredientSignal =
-    /ingredients?(?:\s*\([^)]*\))?\s*[:~\-]/i.test(raw) ||
+    /ingredients?(?:\s*\([^)]*\))?\s*(?::|~|-|\*|•|·|\d|½|¼|¾)/i.test(
+      raw
+    ) ||
     /what\s+you(?:'|’)?ll\s+need\s*[:~\-]?/i.test(raw) ||
     /what\s+you\s+need\s*[:~\-]?/i.test(raw);
 
   const hasInstructionSignal =
-    /(instructions?|directions?|method|steps?|how\s+to\s+make)(?:\s*\([^)]*\))?\s*[:~\-]/i.test(
+    /(instructions?|directions?|method|steps?|how\s+to\s+make)(?:\s*\([^)]*\))?\s*(?::|~|-|\d|1️⃣)/i.test(
       raw
     ) ||
     /\b1\s*[-.)]/.test(raw) ||
@@ -3218,6 +3428,36 @@ async function rescueSocialCaptionIfUseful(result) {
       return result;
     }
 
+    const rescuedEffort =
+      normalizeEffort(
+        parsed.effort
+      );
+
+    const rescuedTags =
+      normalizeTags(
+        parsed.tags
+      );
+
+    const rescuedIsVegetarian =
+      normalizeBoolean(
+        parsed.isVegetarian
+      );
+
+    const rescuedNotes =
+      normalizeRecipeNotes(
+        parsed.notes
+      );
+
+    const socialCaptionMetadataReady =
+      rescuedTags.length > 0 &&
+      Boolean(rescuedNotes) &&
+      typeof parsed.isVegetarian === "boolean" &&
+      ["quick", "normal", "big"].includes(
+        String(parsed.effort || "")
+          .trim()
+          .toLowerCase()
+      );
+
     const rescuedRecipe = {
       name: rescuedName,
       ingredients: rescuedIngredients.join("\n"),
@@ -3225,7 +3465,12 @@ async function rescueSocialCaptionIfUseful(result) {
       photoUrl: result.image || result.recipe?.photoUrl || "",
       slug: `${slugify(rescuedName)}-${Date.now().toString().slice(-4)}`,
       sourceUrl: result.recipe?.sourceUrl || result.importedFromUrl || result.sourceUrl || "",
-      effort: "normal",
+      effort: rescuedEffort,
+      tags: rescuedTags,
+      isVegetarian:
+        rescuedIsVegetarian,
+      notes:
+        rescuedNotes,
       importStatus: "full",
       fallbackText: "",
     };
@@ -3239,9 +3484,18 @@ async function rescueSocialCaptionIfUseful(result) {
       ingredients: rescuedIngredients,
       instructions: rescuedInstructions,
       recipe: rescuedRecipe,
+      effort:
+        rescuedEffort,
+      tags:
+        rescuedTags,
+      isVegetarian:
+        rescuedIsVegetarian,
+      notes:
+        rescuedNotes,
       debug: {
         ...(result.debug || {}),
         socialCaptionRescue: true,
+        socialCaptionMetadataReady,
         originalSuccessLevel: result.successLevel,
         originalName: result.name,
         rescueTextLength: rescueText.length,
@@ -3879,14 +4133,24 @@ async function applyAiCleanupToResult(result) {
     instructionCount <= 8 &&
     instructionsAlreadyUseful;
 
+  const socialCaptionRescueAlreadyUseful =
+    result.successLevel === "full" &&
+    result.debug?.socialCaptionRescue === true &&
+    result.debug?.socialCaptionMetadataReady === true &&
+    instructionsAlreadyUseful;
+
   const shouldSkipAiCleanup =
     visibleRecipeFallbackAlreadyUseful ||
-    simpleFullImportAlreadyUseful;
+    simpleFullImportAlreadyUseful ||
+    socialCaptionRescueAlreadyUseful;
 
   if (shouldSkipAiCleanup) {
-    const skipReason = visibleRecipeFallbackAlreadyUseful
-      ? "visible-recipe-full-import"
-      : "simple-full-import";
+    const skipReason =
+      visibleRecipeFallbackAlreadyUseful
+        ? "visible-recipe-full-import"
+        : socialCaptionRescueAlreadyUseful
+          ? "social-caption-full-import"
+          : "simple-full-import";
 
     result.aiCleanup = {
       enabled: false,
@@ -5026,11 +5290,22 @@ COOK MODE INSTRUCTION RULES:
 - Keep steps concise but useful.
 - Each instruction should be understandable without constantly checking the ingredient list.
 
+METADATA:
+- Choose effort as exactly one of: "quick", "normal", or "big".
+- Add 3 to 8 useful lowercase browsing tags when appropriate.
+- Set isVegetarian to true only when the recipe contains no meat, poultry, seafood, fish, or meat-based broth.
+- Write one short useful notes sentence about the recipe.
+- Do not mention that the recipe was imported.
+
 Return format:
 {
   "name": "...",
   "ingredients": ["..."],
-  "instructions": ["..."]
+  "instructions": ["..."],
+  "effort": "normal",
+  "tags": ["dinner", "beef", "easy"],
+  "isVegetarian": false,
+  "notes": "..."
 }
 
 Pasted text:

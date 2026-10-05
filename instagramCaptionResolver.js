@@ -164,6 +164,7 @@ function scoreCaptionCandidate(candidate) {
   }
 
   const sourceBaseScore = {
+    "embed-caption": 130,
     "script-caption": 120,
     "script-caption-text": 115,
     "script-edge-caption": 110,
@@ -258,6 +259,371 @@ function chooseBestCaptionCandidate(candidates) {
   );
 }
 
+const INSTAGRAM_EMBED_USER_AGENT =
+  "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) " +
+  "AppleWebKit/537.36 (KHTML, like Gecko) " +
+  "Chrome/150.0.0.0 Safari/537.36";
+
+function getInstagramShortcode(rawUrl) {
+  try {
+    const parsed = new URL(rawUrl);
+
+    return (
+      parsed.pathname.match(
+        /^\/(?:reel|reels|p)\/([^/?#]+)/
+      )?.[1] || ""
+    );
+  } catch {
+    return "";
+  }
+}
+
+function extractBalancedInstagramJson(
+  text,
+  start
+) {
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+
+  for (
+    let i = start;
+    i < text.length;
+    i++
+  ) {
+    const ch = text[i];
+
+    if (inString) {
+      if (escaped) {
+        escaped = false;
+      } else if (ch === "\\") {
+        escaped = true;
+      } else if (ch === '"') {
+        inString = false;
+      }
+
+      continue;
+    }
+
+    if (ch === '"') {
+      inString = true;
+    } else if (ch === "{") {
+      depth++;
+    } else if (ch === "}") {
+      depth--;
+
+      if (depth === 0) {
+        return text.slice(
+          start,
+          i + 1
+        );
+      }
+    }
+  }
+
+  return null;
+}
+
+function extractInstagramEmbedMedia(
+  html
+) {
+  const contextKey =
+    '"contextJSON":';
+
+  let searchFrom = 0;
+
+  while (true) {
+    const index =
+      html.indexOf(
+        contextKey,
+        searchFrom
+      );
+
+    if (index === -1) {
+      break;
+    }
+
+    const quoteStart =
+      html.indexOf(
+        '"',
+        index +
+          contextKey.length
+      );
+
+    if (quoteStart === -1) {
+      break;
+    }
+
+    let i =
+      quoteStart + 1;
+    let escaped = false;
+
+    for (
+      ;
+      i < html.length;
+      i++
+    ) {
+      const ch = html[i];
+
+      if (escaped) {
+        escaped = false;
+      } else if (ch === "\\") {
+        escaped = true;
+      } else if (ch === '"') {
+        break;
+      }
+    }
+
+    searchFrom = i + 1;
+
+    const token =
+      html.slice(
+        quoteStart,
+        i + 1
+      );
+
+    try {
+      const inner =
+        JSON.parse(token);
+
+      const payload =
+        JSON.parse(inner);
+
+      const media =
+        payload?.gql_data
+          ?.shortcode_media ||
+        payload?.context
+          ?.media;
+
+      if (media) {
+        return media;
+      }
+    } catch {
+      // Try another contextJSON block.
+    }
+  }
+
+  const rawKey =
+    '"shortcode_media":';
+
+  const rawIndex =
+    html.indexOf(rawKey);
+
+  if (rawIndex !== -1) {
+    const braceStart =
+      html.indexOf(
+        "{",
+        rawIndex +
+          rawKey.length
+      );
+
+    if (braceStart !== -1) {
+      const raw =
+        extractBalancedInstagramJson(
+          html,
+          braceStart
+        );
+
+      if (raw) {
+        try {
+          return JSON.parse(raw);
+        } catch {
+          // Browser fallback remains available.
+        }
+      }
+    }
+  }
+
+  return null;
+}
+
+function getInstagramEmbedImage(
+  media
+) {
+  if (media?.display_url) {
+    return media.display_url;
+  }
+
+  return (
+    media
+      ?.edge_sidecar_to_children
+      ?.edges?.[0]
+      ?.node?.display_url ||
+    ""
+  );
+}
+
+async function tryResolveInstagramEmbedCaption(
+  sourceUrl
+) {
+  const shortcode =
+    getInstagramShortcode(
+      sourceUrl
+    );
+
+  if (!shortcode) {
+    return null;
+  }
+
+  const embedUrl =
+    `https://www.instagram.com/p/${shortcode}/embed/captioned/`;
+
+  const controller =
+    new AbortController();
+
+  const timeout =
+    setTimeout(
+      () =>
+        controller.abort(),
+      12_000
+    );
+
+  let response;
+
+  try {
+    response =
+      await fetch(
+        embedUrl,
+        {
+          headers: {
+            "User-Agent":
+              INSTAGRAM_EMBED_USER_AGENT,
+            Accept:
+              "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            "Accept-Language":
+              "en-US,en;q=0.9",
+            "Sec-Fetch-Dest":
+              "document",
+            "Sec-Fetch-Mode":
+              "navigate",
+            "Sec-Fetch-Site":
+              "none",
+          },
+          redirect:
+            "follow",
+          signal:
+            controller.signal,
+        }
+      );
+  } catch (error) {
+    console.warn(
+      "Instagram public caption preflight failed:",
+      error instanceof Error
+        ? error.message
+        : String(error)
+    );
+
+    return null;
+  } finally {
+    clearTimeout(timeout);
+  }
+
+  if (!response.ok) {
+    return null;
+  }
+
+  const html =
+    await response.text();
+
+  if (!html) {
+    return null;
+  }
+
+  const media =
+    extractInstagramEmbedMedia(
+      html
+    );
+
+  if (!media) {
+    return null;
+  }
+
+  const rawCaption =
+    String(
+      media
+        ?.edge_media_to_caption
+        ?.edges?.[0]
+        ?.node?.text ||
+      ""
+    ).trim();
+
+  const captionText =
+    cleanInstagramDescriptionWrapper(
+      rawCaption
+    );
+
+  if (
+    !captionText ||
+    looksGenericInstagramText(
+      captionText
+    )
+  ) {
+    return null;
+  }
+
+  const candidate = {
+    text: captionText,
+    source:
+      "embed-caption",
+  };
+
+  const captionScore =
+    scoreCaptionCandidate(
+      candidate
+    );
+
+  const username =
+    String(
+      media?.owner?.username ||
+      ""
+    ).trim();
+
+  return {
+    success: true,
+    platform:
+      "instagram",
+    sourceUrl,
+    finalUrl:
+      embedUrl,
+    navigationStatus:
+      response.status,
+
+    captionText,
+
+    captionSource:
+      "embed-caption",
+
+    captionScore,
+
+    title:
+      username
+        ? `Instagram post by @${username}`
+        : "Instagram post",
+
+    imageUrl:
+      normalizeCaptionText(
+        getInstagramEmbedImage(
+          media
+        )
+      ),
+
+    candidateCount: 1,
+
+    candidates: [
+      {
+        ...candidate,
+        score:
+          captionScore,
+      },
+    ],
+
+    bodyTextPreview: "",
+
+    resolver:
+      "public-embed",
+  };
+}
+
 export async function resolveInstagramCaption(
   rawUrl,
   {
@@ -268,6 +634,32 @@ export async function resolveInstagramCaption(
 ) {
   const sourceUrl =
     validateInstagramUrl(rawUrl);
+
+  const publicEmbedResult =
+    await tryResolveInstagramEmbedCaption(
+      sourceUrl
+    );
+
+  if (publicEmbedResult) {
+    console.log(
+      "Instagram public caption resolver succeeded:",
+      {
+        captionLength:
+          publicEmbedResult
+            .captionText.length,
+        imageFound:
+          Boolean(
+            publicEmbedResult
+              .imageUrl
+          ),
+        score:
+          publicEmbedResult
+            .captionScore,
+      }
+    );
+
+    return publicEmbedResult;
+  }
 
   const browser = await chromium.launch({
     headless,
