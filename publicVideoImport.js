@@ -263,6 +263,89 @@ function parsedRecipeIsFull(
   );
 }
 
+const MIN_TEASER_MEASUREMENT_COVERAGE =
+  0.25;
+
+function ingredientHasExplicitAmount(
+  value
+) {
+  const text =
+    String(value || "").trim();
+
+  if (
+    !text ||
+    text.endsWith(":")
+  ) {
+    return false;
+  }
+
+  return /^(?:about\s+|approx(?:imately)?\.?\s+|around\s+|roughly\s+)?(?:(?:\d+\s+\d+\/\d+)|(?:\d+\/\d+)|(?:\d+(?:\.\d+)?)|[¼½¾⅓⅔⅛⅜⅝⅞]|(?:one|two|three|four|five|six|seven|eight|nine|ten))(?=\s|\(|$)/i.test(
+    text
+  );
+}
+
+function getIngredientMeasurementCoverage(
+  ingredients
+) {
+  const ingredientLines =
+    Array.isArray(ingredients)
+      ? ingredients.filter(
+          (ingredient) => {
+            const text =
+              String(
+                ingredient || ""
+              ).trim();
+
+            return (
+              text &&
+              !text.endsWith(":")
+            );
+          }
+        )
+      : [];
+
+  if (
+    ingredientLines.length === 0
+  ) {
+    return 0;
+  }
+
+  const measuredCount =
+    ingredientLines.filter(
+      ingredientHasExplicitAmount
+    ).length;
+
+  return (
+    measuredCount /
+    ingredientLines.length
+  );
+}
+
+function captionLooksLikeRecipeTeaser(
+  value
+) {
+  const text =
+    String(value || "");
+
+  return (
+    /(?:^|\n)\s*#{0,3}\s*short recipe\b/i.test(
+      text
+    ) ||
+    /\bfull step[-\s]?by[-\s]?step\b/i.test(
+      text
+    ) ||
+    /\b(?:full|complete)\s+recipe\b[\s\S]{0,100}\b(?:bio|link|comment|website)\b/i.test(
+      text
+    ) ||
+    /\b(?:link|recipe)\s+in\s+(?:my\s+)?bio\b/i.test(
+      text
+    ) ||
+    /\bcomment\s+['"“”‘’]?recipe['"“”‘’]?\b/i.test(
+      text
+    )
+  );
+}
+
 export async function importRecipeFromPublicVideoUrl({
   sourceUrl,
   language = "en",
@@ -378,6 +461,15 @@ export async function importRecipeFromPublicVideoUrl({
     let processingPath =
       "caption-unavailable";
 
+    let captionLooksIncomplete =
+      false;
+
+    let captionMeasurementCoverage =
+      0;
+
+    let captionNeedsVideoRescue =
+      false;
+
     if (captionEvidence) {
       const parsedCaption =
         await parseRecipeTextWithAI(
@@ -390,10 +482,29 @@ export async function importRecipeFromPublicVideoUrl({
           cleanText
         );
 
+      captionLooksIncomplete =
+        captionLooksLikeRecipeTeaser(
+          instagramCaption.text
+        );
+
+      captionMeasurementCoverage =
+        getIngredientMeasurementCoverage(
+          parsedRecipe.ingredients
+        );
+
+      captionNeedsVideoRescue =
+        parsedRecipeIsFull(
+          parsedRecipe
+        ) &&
+        captionLooksIncomplete &&
+        captionMeasurementCoverage <
+          MIN_TEASER_MEASUREMENT_COVERAGE;
+
       processingPath =
         parsedRecipeIsFull(
           parsedRecipe
-        )
+        ) &&
+        !captionNeedsVideoRescue
           ? "caption-first-full"
           : "caption-first-partial";
     }
@@ -408,7 +519,8 @@ export async function importRecipeFromPublicVideoUrl({
     if (
       !parsedRecipeIsFull(
         parsedRecipe
-      )
+      ) ||
+      captionNeedsVideoRescue
     ) {
       try {
         resolvedVideo =
@@ -476,6 +588,13 @@ export async function importRecipeFromPublicVideoUrl({
               parsedCombined,
               cleanText
             );
+
+          captionNeedsVideoRescue =
+            captionLooksIncomplete &&
+            getIngredientMeasurementCoverage(
+              parsedRecipe.ingredients
+            ) <
+              MIN_TEASER_MEASUREMENT_COVERAGE;
         }
 
         processingPath =
@@ -623,6 +742,31 @@ export async function importRecipeFromPublicVideoUrl({
         evidenceWarnings,
     };
 
+    const finalMeasurementCoverage =
+      getIngredientMeasurementCoverage(
+        parsedRecipe.ingredients
+      );
+
+    const finalNeedsFinishing =
+      !parsedRecipeIsFull(
+        parsedRecipe
+      ) ||
+      (
+        captionLooksIncomplete &&
+        finalMeasurementCoverage <
+          MIN_TEASER_MEASUREMENT_COVERAGE
+      );
+
+    if (
+      finalNeedsFinishing &&
+      resolvedVideo &&
+      processingPath ===
+        "caption-and-video"
+    ) {
+      processingPath =
+        "caption-and-video-partial";
+    }
+
     const baseDebug = {
       publicVideoImport: true,
 
@@ -658,12 +802,18 @@ export async function importRecipeFromPublicVideoUrl({
 
       parsedInstructionsCount:
         parsedRecipe.instructions.length,
+
+      captionLooksIncomplete,
+
+      captionMeasurementCoverage,
+
+      finalMeasurementCoverage,
+
+      captionNeedsVideoRescue,
     };
 
     if (
-      !parsedRecipeIsFull(
-        parsedRecipe
-      )
+      finalNeedsFinishing
     ) {
       return {
         success: true,
@@ -744,6 +894,13 @@ export async function importRecipeFromPublicVideoUrl({
         debug: {
           ...baseDebug,
           partialRecipe: true,
+
+          partialReason:
+            captionLooksIncomplete &&
+            finalMeasurementCoverage <
+              MIN_TEASER_MEASUREMENT_COVERAGE
+              ? "instagram-teaser-missing-measurements"
+              : "incomplete-recipe-evidence",
         },
       };
     }
