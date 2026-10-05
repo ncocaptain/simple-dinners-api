@@ -27,6 +27,9 @@ import {
   importRecipeFromPublicTikTokUrl,
 } from "./publicTikTokImport.js";
 import {
+  importRecipeFromPublicYouTubeUrl,
+} from "./youtubePublicImport.js";
+import {
   createFacebookVideoResolverWorkspace,
   cleanupFacebookVideoResolverWorkspace,
   resolveFacebookVideoToFile,
@@ -1125,6 +1128,14 @@ function detectPublicVideoPlatform(value) {
     ) {
       return "instagram";
     }
+
+    if (
+      hostname === "youtube.com" ||
+      hostname.endsWith(".youtube.com") ||
+      hostname === "youtu.be"
+    ) {
+      return "youtube";
+    }
   } catch {
     return "";
   }
@@ -1166,7 +1177,7 @@ app.post("/import-video-url", async (request, reply) => {
       successLevel:
         "unsupported-video-url",
       error:
-        "Please provide a public Instagram reel or TikTok video URL.",
+        "Please provide a public Instagram, TikTok, or YouTube video URL.",
       sourceUrl,
     });
   }
@@ -1193,7 +1204,9 @@ app.post("/import-video-url", async (request, reply) => {
     const importer =
       platform === "tiktok"
         ? importRecipeFromPublicTikTokUrl
-        : importRecipeFromPublicVideoUrl;
+        : platform === "youtube"
+          ? importRecipeFromPublicYouTubeUrl
+          : importRecipeFromPublicVideoUrl;
 
     const result =
       await importer({
@@ -1259,6 +1272,9 @@ app.post("/import-video-url", async (request, reply) => {
         "INVALID_TIKTOK_URL",
         "INVALID_TIKTOK_PROTOCOL",
         "UNSUPPORTED_TIKTOK_HOST",
+        "INVALID_YOUTUBE_URL",
+        "INVALID_YOUTUBE_VIDEO_URL",
+        "UNSUPPORTED_YOUTUBE_HOST",
       ]);
 
     const unavailableErrors =
@@ -1267,6 +1283,9 @@ app.post("/import-video-url", async (request, reply) => {
         "PUBLIC_VIDEO_NO_RECIPE_FOUND",
         "TIKTOK_CAPTION_UNAVAILABLE",
         "TIKTOK_OEMBED_FAILED",
+        "YOUTUBE_PAGE_UNAVAILABLE",
+        "YOUTUBE_PLAYER_UNAVAILABLE",
+        "YOUTUBE_DESCRIPTION_UNAVAILABLE",
       ]);
 
     if (
@@ -1340,7 +1359,9 @@ app.post("/import-video-url", async (request, reply) => {
     const debugVersion =
       platform === "tiktok"
         ? "simple-dinners-api-public-tiktok-import-v1"
-        : "simple-dinners-api-public-video-import-v3";
+        : platform === "youtube"
+          ? "simple-dinners-api-youtube-import-v1"
+          : "simple-dinners-api-public-video-import-v3";
 
     return reply
       .code(statusCode)
