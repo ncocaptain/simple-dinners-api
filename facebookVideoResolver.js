@@ -19,6 +19,10 @@ import {
   pipeline,
 } from "node:stream/promises";
 
+import {
+  resolveFacebookPublicPlugin,
+} from "./facebookPublicPluginResolver.js";
+
 const DEFAULT_NAVIGATION_TIMEOUT_MS = 45_000;
 const DEFAULT_DISCOVERY_WAIT_MS = 3_000;
 const DEFAULT_PROCESS_TIMEOUT_MS = 2 * 60 * 1000;
@@ -720,6 +724,157 @@ export async function resolveFacebookVideoToFile(
     );
   }
 
+  const outputPath =
+    path.join(
+      workspaceDir,
+      "resolved-facebook-video.mp4"
+    );
+
+  try {
+    const publicPlugin =
+      await resolveFacebookPublicPlugin(
+        sourceUrl
+      );
+
+    if (
+      publicPlugin
+        ?.selectedMediaUrl
+    ) {
+      try {
+        await saveFacebookVideoToFile(
+          {
+            mediaUrl:
+              publicPlugin
+                .selectedMediaUrl,
+
+            sourceUrl:
+              publicPlugin
+                .canonicalUrl ||
+              sourceUrl,
+
+            cookieHeader: "",
+
+            userAgent:
+              publicPlugin
+                .userAgent,
+
+            outputPath,
+          },
+          {
+            timeoutMs:
+              processTimeoutMs,
+          }
+        );
+
+        const outputStats =
+          await stat(
+            outputPath
+          );
+
+        if (
+          !outputStats.isFile() ||
+          outputStats.size === 0
+        ) {
+          throw createFacebookResolverError(
+            "The resolved Facebook video was empty.",
+            "FACEBOOK_VIDEO_EMPTY"
+          );
+        }
+
+        if (
+          outputStats.size >
+          maxOutputBytes
+        ) {
+          throw createFacebookResolverError(
+            "The resolved Facebook video is larger than the supported limit.",
+            "FACEBOOK_VIDEO_TOO_LARGE"
+          );
+        }
+
+        console.log(
+          "Facebook public plugin resolver succeeded:",
+          {
+            canonicalUrl:
+              publicPlugin
+                .canonicalUrl,
+            selectedQuality:
+              publicPlugin
+                .selectedQuality,
+            selectedKey:
+              publicPlugin
+                .selectedKey,
+            sizeBytes:
+              outputStats.size,
+            candidateCount:
+              publicPlugin
+                .candidateCount,
+          }
+        );
+
+        return {
+          platform:
+            "facebook",
+
+          sourceUrl,
+
+          canonicalUrl:
+            publicPlugin
+              .canonicalUrl,
+
+          outputPath,
+
+          sizeBytes:
+            outputStats.size,
+
+          selectedQuality:
+            publicPlugin
+              .selectedQuality,
+
+          candidateCount:
+            publicPlugin
+              .candidateCount,
+
+          pageTitle: "",
+          ogTitle: "",
+          description: "",
+          imageUrl: "",
+          oEmbedUrl: "",
+
+          resolver:
+            "public-plugin",
+        };
+      } catch (error) {
+        await rm(
+          outputPath,
+          {
+            force: true,
+          }
+        );
+
+        console.warn(
+          "Facebook public plugin stream failed; falling back to browser resolver:",
+          error instanceof Error
+            ? error.message
+            : String(error)
+        );
+      }
+    }
+  } catch (error) {
+    console.warn(
+      "Facebook public plugin resolver failed; falling back to browser resolver:",
+      error instanceof Error
+        ? error.message
+        : String(error)
+    );
+
+    await rm(
+      outputPath,
+      {
+        force: true,
+      }
+    );
+  }
+
   const inspection =
     await inspectFacebookPage(
       sourceUrl,
@@ -728,12 +883,6 @@ export async function resolveFacebookVideoToFile(
         navigationTimeoutMs,
         discoveryWaitMs,
       }
-    );
-
-  const outputPath =
-    path.join(
-      workspaceDir,
-      "resolved-facebook-video.mp4"
     );
 
   await saveFacebookVideoToFile(
