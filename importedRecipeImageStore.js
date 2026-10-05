@@ -371,3 +371,40 @@ export async function persistImportedRecipeImage(
     return originalUrl;
   }
 }
+
+
+/**
+ * Stores a user-selected recipe cover image in the same
+ * durable Supabase bucket used for imported recipe images.
+ */
+export async function persistUploadedRecipeImage(
+  buffer,
+  contentType = ""
+) {
+  if (!Buffer.isBuffer(buffer) || buffer.length === 0) {
+    throw new Error("Uploaded recipe image was empty");
+  }
+
+  if (buffer.length > MAX_IMAGE_BYTES) {
+    throw new Error(
+      `Uploaded recipe image exceeds ${MAX_IMAGE_BYTES} byte limit`
+    );
+  }
+
+  const format = detectImageFormat(
+    buffer,
+    contentType
+  );
+
+  if (!format) {
+    throw new Error(
+      "Unsupported uploaded recipe image type"
+    );
+  }
+
+  return await uploadImageToStorage(
+    buffer,
+    format.mime,
+    format.extension
+  );
+}

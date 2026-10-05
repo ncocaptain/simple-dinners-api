@@ -34,6 +34,7 @@ import {
 
 import {
   persistImportedRecipeImage,
+  persistUploadedRecipeImage,
 } from "./importedRecipeImageStore.js";
 import {
   analyzeRecipeNutrition,
@@ -174,6 +175,109 @@ const SCREENSHOT_MIME_TYPES = new Set([
 ]);
 
 const MAX_SCREENSHOT_TOTAL_BYTES = 25 * 1024 * 1024;
+
+// =====================================================
+// POST /upload-recipe-image
+// Persist an optional user-selected cover photo for a
+// normal URL/social recipe import.
+// =====================================================
+
+app.post("/upload-recipe-image", async (request, reply) => {
+  if (!request.isMultipart()) {
+    return reply.code(415).send({
+      success: false,
+      error: "Recipe image uploads must use multipart/form-data.",
+    });
+  }
+
+  let uploadedImage = null;
+
+  try {
+    for await (const part of request.parts()) {
+      if (part.type !== "file") {
+        continue;
+      }
+
+      if (
+        part.fieldname !== "image" ||
+        uploadedImage
+      ) {
+        part.file.resume();
+        continue;
+      }
+
+      if (
+        !SCREENSHOT_MIME_TYPES.has(
+          String(part.mimetype || "").toLowerCase()
+        )
+      ) {
+        part.file.resume();
+
+        return reply.code(415).send({
+          success: false,
+          error:
+            "Please choose a JPEG, PNG, or WebP recipe image.",
+        });
+      }
+
+      const buffer = await part.toBuffer();
+
+      uploadedImage = {
+        buffer,
+        mimetype: part.mimetype || "",
+      };
+    }
+
+    if (!uploadedImage) {
+      return reply.code(400).send({
+        success: false,
+        error: "Choose a recipe image first.",
+      });
+    }
+
+    const photoUrl =
+      await persistUploadedRecipeImage(
+        uploadedImage.buffer,
+        uploadedImage.mimetype
+      );
+
+    return {
+      success: true,
+      photoUrl,
+    };
+  } catch (error) {
+    const statusCode =
+      Number(error?.statusCode) || 500;
+
+    const errorCode =
+      String(error?.code || "");
+
+    const errorMessage =
+      error instanceof Error
+        ? error.message
+        : String(error);
+
+    const uploadLimitReached =
+      statusCode === 413 ||
+      errorCode.includes("LIMIT") ||
+      errorCode.includes("TOO_LARGE") ||
+      errorMessage.includes("exceeds");
+
+    console.error(
+      "Recipe image upload failed:",
+      errorMessage
+    );
+
+    return reply
+      .code(uploadLimitReached ? 413 : 500)
+      .send({
+        success: false,
+        error: uploadLimitReached
+          ? "That image is larger than 8 MB. Choose a smaller image."
+          : "Simple Dinners could not save that recipe image.",
+      });
+  }
+});
 
 app.get("/", async () => {
   return {
