@@ -2,6 +2,18 @@ import {
   resolveTikTokCaption,
 } from "./tiktokCaptionResolver.js";
 
+import {
+  cleanupTikTokVideoResolverWorkspace,
+  createTikTokVideoResolverWorkspace,
+  resolveTikTokVideoToFile,
+} from "./tiktokPublicVideoResolver.js";
+
+import {
+  analyzeVideoRecipeEvidence,
+  cleanupVideoImportWorkspace,
+  prepareVideoImportInputs,
+} from "./videoImportHelpers.js";
+
 function createTikTokImportError(
   message,
   code,
@@ -247,6 +259,9 @@ export async function importRecipeFromPublicTikTokUrl({
   const recipeEvidence =
     `TikTok caption:\n${tiktok.captionText}`;
 
+  let combinedRecipeEvidence =
+    recipeEvidence;
+
   const parsedFromCaption =
     await parseRecipeTextWithAI(
       recipeEvidence,
@@ -256,11 +271,116 @@ export async function importRecipeFromPublicTikTokUrl({
       }
     );
 
-  const parsedRecipe =
+  let parsedRecipe =
     normalizeParsedRecipe(
       parsedFromCaption,
       cleanText
     );
+
+  let resolvedVideo = null;
+  let videoResolveError = null;
+  let preparedVideo = null;
+  let videoEvidence = null;
+
+  if (
+    !parsedRecipeIsFull(
+      parsedRecipe
+    )
+  ) {
+    const resolverWorkspace =
+      await createTikTokVideoResolverWorkspace();
+
+    try {
+      resolvedVideo =
+        await resolveTikTokVideoToFile(
+          tiktok.sourceUrl ||
+            tiktok.expandedUrl ||
+            sourceUrl,
+          {
+            workspaceDir:
+              resolverWorkspace,
+          }
+        );
+
+      preparedVideo =
+        await prepareVideoImportInputs(
+          resolvedVideo.outputPath,
+          {
+            openai,
+            language:
+              normalizedLanguage,
+          }
+        );
+
+      videoEvidence =
+        await analyzeVideoRecipeEvidence(
+          {
+            framePaths:
+              preparedVideo.framePaths,
+            transcriptText:
+              preparedVideo.transcriptText,
+          },
+          {
+            openai,
+            language:
+              normalizedLanguage,
+          }
+        );
+
+      const videoEvidenceText =
+        videoEvidence
+          ?.hasRecipeContent
+          ? String(
+              videoEvidence
+                .combinedRecipeText ||
+              ""
+            ).trim()
+          : "";
+
+      if (
+        videoEvidenceText
+      ) {
+        combinedRecipeEvidence = [
+          recipeEvidence,
+          `Video evidence:\n${videoEvidenceText}`,
+        ]
+          .filter(Boolean)
+          .join("\n\n")
+          .trim();
+
+        const parsedCombined =
+          await parseRecipeTextWithAI(
+            combinedRecipeEvidence,
+            {
+              language:
+                normalizedLanguage,
+            }
+          );
+
+        parsedRecipe =
+          normalizeParsedRecipe(
+            parsedCombined,
+            cleanText
+          );
+      }
+    } catch (error) {
+      videoResolveError =
+        error;
+    } finally {
+      if (
+        preparedVideo
+          ?.workspaceDir
+      ) {
+        await cleanupVideoImportWorkspace(
+          preparedVideo.workspaceDir
+        );
+      }
+
+      await cleanupTikTokVideoResolverWorkspace(
+        resolverWorkspace
+      );
+    }
+  }
 
   const recipeName = cleanText(
     parsedRecipe.name ||
@@ -288,8 +408,14 @@ export async function importRecipeFromPublicTikTokUrl({
       parsedRecipeIsFull(
         parsedRecipe
       )
-        ? "tiktok-caption-first-full"
-        : "tiktok-caption-first-partial",
+        ? resolvedVideo
+          ? "tiktok-caption-and-video"
+          : "tiktok-caption-first-full"
+        : resolvedVideo
+          ? "tiktok-caption-and-video-partial"
+          : videoResolveError
+            ? "tiktok-caption-only-video-unavailable"
+            : "tiktok-caption-first-partial",
 
     language:
       normalizedLanguage,
@@ -298,7 +424,23 @@ export async function importRecipeFromPublicTikTokUrl({
       tiktok.captionText.length,
 
     combinedEvidenceLength:
-      recipeEvidence.length,
+      combinedRecipeEvidence.length,
+
+    videoImport:
+      Boolean(
+        resolvedVideo
+      ),
+
+    videoAvailable:
+      Boolean(
+        resolvedVideo
+      ),
+
+    transcriptLength:
+      String(
+        preparedVideo?.transcriptText ||
+        ""
+      ).length,
 
     parsedIngredientsCount:
       parsedRecipe.ingredients.length,
@@ -319,7 +461,17 @@ export async function importRecipeFromPublicTikTokUrl({
       tiktok.captionText,
 
     combinedRecipeText:
-      recipeEvidence,
+      combinedRecipeEvidence,
+
+    videoAvailable:
+      Boolean(
+        resolvedVideo
+      ),
+
+    videoError:
+      videoResolveError instanceof Error
+        ? videoResolveError.message
+        : "",
 
     possibleMissingContent:
       !parsedRecipeIsFull(
@@ -413,10 +565,39 @@ export async function importRecipeFromPublicTikTokUrl({
           "public-video-import-partial",
 
         fallbackText:
-          recipeEvidence,
+          combinedRecipeEvidence,
       },
 
       tiktok,
+
+      resolvedTikTokVideo:
+        resolvedVideo
+          ? {
+              available: true,
+              sizeBytes:
+                resolvedVideo.sizeBytes,
+              candidateCount:
+                resolvedVideo.candidateCount,
+              resolver:
+                resolvedVideo.resolver,
+            }
+          : {
+              available: false,
+              sizeBytes: 0,
+              candidateCount: 0,
+              resolver: "",
+              error:
+                videoResolveError instanceof Error
+                  ? videoResolveError.message
+                  : "",
+            },
+
+      transcriptText:
+        String(
+          preparedVideo?.transcriptText ||
+          ""
+        ),
+
       evidence,
       debug,
     };
@@ -496,6 +677,35 @@ export async function importRecipeFromPublicTikTokUrl({
       roughRecipe,
 
     tiktok,
+
+    resolvedTikTokVideo:
+      resolvedVideo
+        ? {
+            available: true,
+            sizeBytes:
+              resolvedVideo.sizeBytes,
+            candidateCount:
+              resolvedVideo.candidateCount,
+            resolver:
+              resolvedVideo.resolver,
+          }
+        : {
+            available: false,
+            sizeBytes: 0,
+            candidateCount: 0,
+            resolver: "",
+            error:
+              videoResolveError instanceof Error
+                ? videoResolveError.message
+                : "",
+          },
+
+    transcriptText:
+      String(
+        preparedVideo?.transcriptText ||
+        ""
+      ),
+
     evidence,
     debug,
   };
@@ -540,6 +750,15 @@ export async function importRecipeFromPublicTikTokUrl({
       photoUrl,
 
     tiktok,
+
+    resolvedTikTokVideo:
+      publicTikTokImportResult
+        .resolvedTikTokVideo,
+
+    transcriptText:
+      publicTikTokImportResult
+        .transcriptText,
+
     evidence,
     debug: {
       ...debug,
