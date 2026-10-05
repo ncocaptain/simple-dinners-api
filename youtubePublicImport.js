@@ -528,6 +528,132 @@ async function fetchCaptionTranscript(
   }
 }
 
+async function fetchYouTubeDataApiMetadata(
+  videoId
+) {
+  const apiKey =
+    String(
+      process.env.YOUTUBE_API_KEY ||
+      ""
+    ).trim();
+
+  if (!apiKey) {
+    return null;
+  }
+
+  try {
+    const url =
+      new URL(
+        "https://www.googleapis.com/youtube/v3/videos"
+      );
+
+    url.searchParams.set(
+      "part",
+      "snippet"
+    );
+
+    url.searchParams.set(
+      "id",
+      videoId
+    );
+
+    url.searchParams.set(
+      "key",
+      apiKey
+    );
+
+    const response =
+      await fetch(
+        url,
+        {
+          headers: {
+            Accept:
+              "application/json",
+          },
+
+          signal:
+            AbortSignal.timeout(
+              12_000
+            ),
+        }
+      );
+
+    if (!response.ok) {
+      const responseText =
+        await response.text();
+
+      console.error(
+        "YouTube Data API metadata request failed:",
+        {
+          status:
+            response.status,
+
+          body:
+            responseText.slice(
+              0,
+              500
+            ),
+        }
+      );
+
+      return null;
+    }
+
+    const data =
+      await response.json();
+
+    const snippet =
+      data?.items?.[0]
+        ?.snippet;
+
+    if (!snippet) {
+      return null;
+    }
+
+    const thumbnails =
+      snippet.thumbnails ||
+      {};
+
+    const thumbnailUrl =
+      String(
+        thumbnails.maxres?.url ||
+        thumbnails.standard?.url ||
+        thumbnails.high?.url ||
+        thumbnails.medium?.url ||
+        thumbnails.default?.url ||
+        ""
+      ).trim();
+
+    return {
+      title:
+        String(
+          snippet.title || ""
+        ).trim(),
+
+      author:
+        String(
+          snippet.channelTitle ||
+          ""
+        ).trim(),
+
+      description:
+        String(
+          snippet.description ||
+          ""
+        ).trim(),
+
+      thumbnailUrl,
+    };
+  } catch (error) {
+    console.error(
+      "YouTube Data API metadata request failed:",
+      error
+    );
+
+    return null;
+  }
+}
+
 async function resolveYouTubePage(
   sourceUrl
 ) {
@@ -554,57 +680,56 @@ async function resolveYouTubePage(
       requestedVideoId
     );
 
-  const response =
-    await fetch(
-      canonicalUrl,
-      {
-        headers: {
-          "User-Agent":
-            YOUTUBE_USER_AGENT,
+  let player = null;
+  let pageStatus = 0;
 
-          Accept:
-            "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+  try {
+    const response =
+      await fetch(
+        canonicalUrl,
+        {
+          headers: {
+            "User-Agent":
+              YOUTUBE_USER_AGENT,
 
-          "Accept-Language":
-            "en-US,en;q=0.9",
-        },
+            Accept:
+              "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
 
-        redirect:
-          "follow",
+            "Accept-Language":
+              "en-US,en;q=0.9",
+          },
 
-        signal:
-          AbortSignal.timeout(
-            15_000
-          ),
-      }
-    );
+          redirect:
+            "follow",
 
-  if (!response.ok) {
-    throw createYouTubeError(
-      "YouTube did not return a readable public video page.",
-      "YOUTUBE_PAGE_UNAVAILABLE",
-      422
-    );
-  }
+          signal:
+            AbortSignal.timeout(
+              15_000
+            ),
+        }
+      );
 
-  const html =
-    await response.text();
+    pageStatus =
+      response.status;
 
-  const player =
-    extractPlayerResponse(
-      html
-    );
+    if (response.ok) {
+      const html =
+        await response.text();
 
-  if (!player) {
-    throw createYouTubeError(
-      "Simple Dinners could not read the public YouTube video details.",
-      "YOUTUBE_PLAYER_UNAVAILABLE",
-      422
+      player =
+        extractPlayerResponse(
+          html
+        );
+    }
+  } catch (error) {
+    console.error(
+      "YouTube public page metadata request failed:",
+      error
     );
   }
 
   const details =
-    player.videoDetails ||
+    player?.videoDetails ||
     {};
 
   const videoId =
@@ -628,6 +753,75 @@ async function resolveYouTubePage(
       ?.captionTracks ||
     [];
 
+  let title =
+    String(
+      details.title || ""
+    ).trim();
+
+  let author =
+    String(
+      details.author || ""
+    ).trim();
+
+  let description =
+    String(
+      details.shortDescription ||
+      ""
+    ).trim();
+
+  let thumbnailUrl =
+    String(
+      thumbnails.at(-1)?.url ||
+      ""
+    ).trim();
+
+  let metadataSource =
+    description
+      ? "public-page"
+      : "";
+
+  let dataApiUsed =
+    false;
+
+  if (!description) {
+    const apiMetadata =
+      await fetchYouTubeDataApiMetadata(
+        videoId
+      );
+
+    if (apiMetadata) {
+      title =
+        apiMetadata.title ||
+        title;
+
+      author =
+        apiMetadata.author ||
+        author;
+
+      description =
+        apiMetadata.description ||
+        description;
+
+      thumbnailUrl =
+        apiMetadata.thumbnailUrl ||
+        thumbnailUrl;
+
+      metadataSource =
+        "youtube-data-api";
+
+      dataApiUsed =
+        true;
+    }
+  }
+
+  if (!description) {
+    throw createYouTubeError(
+      "This YouTube video does not include a readable public description.",
+      "YOUTUBE_DESCRIPTION_UNAVAILABLE",
+      422
+    );
+  }
+
   return {
     sourceUrl:
       buildCanonicalYouTubeUrl(
@@ -637,32 +831,25 @@ async function resolveYouTubePage(
 
     videoId,
 
-    title:
-      String(
-        details.title || ""
-      ).trim(),
-
-    author:
-      String(
-        details.author || ""
-      ).trim(),
-
-    description:
-      String(
-        details.shortDescription ||
-        ""
-      ).trim(),
-
-    thumbnailUrl:
-      String(
-        thumbnails.at(-1)?.url ||
-        ""
-      ).trim(),
+    title,
+    author,
+    description,
+    thumbnailUrl,
 
     captionTracks,
 
     captionTrackCount:
       captionTracks.length,
+
+    metadataSource,
+
+    dataApiUsed,
+
+    publicPageStatus:
+      pageStatus,
+
+    publicPlayerFound:
+      Boolean(player),
   };
 }
 
@@ -815,12 +1002,33 @@ function buildRecipeResult({
 
       captionTrackCount:
         page.captionTrackCount,
+
+      metadataSource:
+        page.metadataSource,
+
+      dataApiUsed:
+        page.dataApiUsed ===
+        true,
     },
 
     debug: {
       processingPath,
 
       youtubePublicPage:
+        true,
+
+      youtubeMetadataSource:
+        page.metadataSource,
+
+      youtubeDataApiUsed:
+        page.dataApiUsed ===
+        true,
+
+      youtubePublicPageStatus:
+        page.publicPageStatus,
+
+      youtubePublicPlayerFound:
+        page.publicPlayerFound ===
         true,
 
       descriptionLength:
