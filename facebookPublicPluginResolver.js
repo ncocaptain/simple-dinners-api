@@ -284,7 +284,7 @@ function extractCandidates(
   return candidates;
 }
 
-async function resolveFacebookShareUrl(
+export async function resolveFacebookPublicUrl(
   sourceUrl
 ) {
   if (
@@ -346,7 +346,7 @@ export async function resolveFacebookPublicPlugin(
   sourceUrl
 ) {
   const canonicalUrl =
-    await resolveFacebookShareUrl(
+    await resolveFacebookPublicUrl(
       sourceUrl
     );
 

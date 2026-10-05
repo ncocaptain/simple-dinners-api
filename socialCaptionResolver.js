@@ -362,7 +362,13 @@ function scoreTitleCandidate(value) {
   if (words.length >= 2 && words.length <= 8) score += 4;
   if (words.length >= 9 && words.length <= 12) score += 1;
   if (FOOD_TITLE_WORDS.test(text)) score += 5;
-  if (text.includes("recipe")) score += 1;
+
+  if (/\brecipes\b/i.test(text)) {
+    score -= 4;
+  } else if (/\brecipe\b/i.test(text)) {
+    score += 1;
+  }
+
   if (text.length > 70) score -= 2;
   if (INSTRUCTION_VERB_RE.test(text)) score -= 2;
 
