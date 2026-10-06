@@ -277,6 +277,35 @@ function parsedRecipeHasCoreContent(
   );
 }
 
+function parsedRecipeHasUsefulContent(
+  recipe
+) {
+  if (
+    !parsedRecipeHasCoreContent(
+      recipe
+    )
+  ) {
+    return false;
+  }
+
+  const ingredientCount =
+    recipe.ingredients.length;
+
+  const instructionCount =
+    recipe.instructions.length;
+
+  // Avoid treating a single ingredient plus a single
+  // vague sentence as a complete recipe.
+  //
+  // Still allow genuinely simple recipes when either
+  // the ingredient list or the instruction set has
+  // enough substance to be useful.
+  return (
+    ingredientCount >= 2 ||
+    instructionCount >= 2
+  );
+}
+
 function ingredientHasExplicitAmount(
   value
 ) {
@@ -881,7 +910,7 @@ function buildRecipeResult({
     parsedRecipe.instructions;
 
   const isFull =
-    parsedRecipeHasCoreContent(
+    parsedRecipeHasUsefulContent(
       parsedRecipe
     ) &&
     !forceNeedsFinishing;
@@ -1106,7 +1135,7 @@ export async function importRecipeFromPublicYouTubeUrl({
     );
 
   const descriptionNeedsRescue =
-    !parsedRecipeHasCoreContent(
+    !parsedRecipeHasUsefulContent(
       parsedRecipe
     ) ||
     (
@@ -1163,7 +1192,7 @@ export async function importRecipeFromPublicYouTubeUrl({
     );
 
   const finalNeedsFinishing =
-    !parsedRecipeHasCoreContent(
+    !parsedRecipeHasUsefulContent(
       parsedRecipe
     ) ||
     (
