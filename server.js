@@ -950,7 +950,16 @@ app.post("/import-recipe", async (request, reply) => {
     const shouldFollowLinkedRecipe =
       firstResult.success &&
       firstResult.linkedRecipeUrl &&
-      (firstResult.ingredients || []).length === 0;
+      (
+        (
+          firstResult.ingredients ||
+          []
+        ).length === 0 ||
+        (
+          firstResult.instructions ||
+          []
+        ).length === 0
+      );
 
     if (shouldFollowLinkedRecipe) {
       let linkedResult = null;
@@ -994,6 +1003,16 @@ app.post("/import-recipe", async (request, reply) => {
           followedLinkedRecipe: true,
           originalUrl: url,
           firstPageName: firstResult.name,
+
+          facebookCommentRecipeLinkFound:
+            firstResult.debug
+              ?.facebookCommentRecipeLinkFound ===
+            true,
+
+          facebookCommentRecipeLink:
+            firstResult.debug
+              ?.facebookCommentRecipeLink ||
+            "",
         },
       };
 
@@ -2330,7 +2349,79 @@ async function fetchAndExtractRecipe(url) {
 
   const $ = cheerio.load(html);
 
-  return extractRecipeFromPage($, url, finalUrl);
+  const result =
+    extractRecipeFromPage(
+      $,
+      url,
+      finalUrl
+    );
+
+  const resultMissingIngredients =
+    !Array.isArray(
+      result?.ingredients
+    ) ||
+    result.ingredients.length ===
+      0;
+
+  const resultMissingInstructions =
+    !Array.isArray(
+      result?.instructions
+    ) ||
+    result.instructions.length ===
+      0;
+
+  if (
+    useFacebookCrawler &&
+    result?.success &&
+    result?.recipe &&
+    !result.linkedRecipeUrl &&
+    (
+      resultMissingIngredients ||
+      resultMissingInstructions
+    )
+  ) {
+    const commentRecipe =
+      findFacebookCommentRecipeLink(
+        html
+      );
+
+    if (commentRecipe?.url) {
+      result.linkedRecipeUrl =
+        commentRecipe.url;
+
+      result.debug = {
+        ...(result.debug || {}),
+
+        linkedRecipeUrl:
+          commentRecipe.url,
+
+        facebookCommentRecipeLinkFound:
+          true,
+
+        facebookCommentRecipeLink:
+          commentRecipe.url,
+
+        facebookCommentRecipeLinkScore:
+          commentRecipe.score,
+      };
+
+      console.log(
+        "Found Facebook comment recipe link:",
+        {
+          sourceUrl:
+            finalUrl,
+
+          recipeUrl:
+            commentRecipe.url,
+
+          score:
+            commentRecipe.score,
+        }
+      );
+    }
+  }
+
+  return result;
 }
 
 function shouldUseFastImportResult(result) {
@@ -4489,6 +4580,285 @@ function extractBySelectors($, selectors) {
   }
 
   return Array.from(new Set(results));
+}
+
+// =====================================================
+// Facebook first-comment recipe-link rescue
+//
+// Facebook's crawler surface can expose public comment
+// text even when the normal browser surface is blocked.
+// Only trust links accompanied by strong recipe-link
+// wording so unrelated recommended recipes or affiliate
+// links are not selected accidentally.
+// =====================================================
+
+function decodeFacebookEmbeddedText(
+  value
+) {
+  const raw =
+    String(value || "");
+
+  if (!raw) {
+    return "";
+  }
+
+  try {
+    return JSON.parse(
+      `"${raw}"`
+    );
+  } catch {
+    return raw
+      .replace(
+        /\\u0025/gi,
+        "%"
+      )
+      .replace(
+        /\\u002F/gi,
+        "/"
+      )
+      .replace(
+        /\\u0026/gi,
+        "&"
+      )
+      .replace(
+        /\\u003D/gi,
+        "="
+      )
+      .replace(
+        /\\u003F/gi,
+        "?"
+      )
+      .replace(
+        /\\u003A/gi,
+        ":"
+      )
+      .replace(
+        /\\u([\dA-Fa-f]{4})/g,
+        (_, hex) =>
+          String.fromCharCode(
+            parseInt(
+              hex,
+              16
+            )
+          )
+      )
+      .replace(
+        /\\\//g,
+        "/"
+      )
+      .replace(
+        /\\"/g,
+        '"'
+      )
+      .replace(
+        /\\\\/g,
+        "\\"
+      );
+  }
+}
+
+function isUsableFacebookCommentRecipeUrl(
+  value
+) {
+  try {
+    const parsed =
+      new URL(
+        String(value || "")
+          .trim()
+      );
+
+    if (
+      parsed.protocol !== "https:" &&
+      parsed.protocol !== "http:"
+    ) {
+      return false;
+    }
+
+    const host =
+      parsed.hostname
+        .toLowerCase()
+        .replace(/^www\./, "");
+
+    const blockedHosts =
+      [
+        "facebook.com",
+        "fb.watch",
+        "instagram.com",
+        "tiktok.com",
+        "youtube.com",
+        "youtu.be",
+        "amazon.com",
+        "amzn.to",
+      ];
+
+    return !blockedHosts.some(
+      (blockedHost) =>
+        host === blockedHost ||
+        host.endsWith(
+          `.${blockedHost}`
+        )
+    );
+  } catch {
+    return false;
+  }
+}
+
+function findFacebookCommentRecipeLink(
+  html
+) {
+  const source =
+    String(html || "");
+
+  const pattern =
+    /"(?:text|comment_body)":"((?:\\.|[^"])*)"/gi;
+
+  const candidates = [];
+
+  let match;
+
+  while (
+    (
+      match =
+        pattern.exec(source)
+    )
+  ) {
+    const decoded =
+      decodeFacebookEmbeddedText(
+        match[1]
+      )
+        .replace(
+          /\s+/g,
+          " "
+        )
+        .trim();
+
+    if (
+      !decoded ||
+      decoded.length > 8000
+    ) {
+      continue;
+    }
+
+    const hasStrongSignal =
+      /\bfull\s+recipe\b/i.test(
+        decoded
+      ) ||
+      /\bcomplete\s+recipe\b/i.test(
+        decoded
+      ) ||
+      /\brecipe\s+link\b/i.test(
+        decoded
+      ) ||
+      /\bget\s+the\s+recipe\b/i.test(
+        decoded
+      );
+
+    if (!hasStrongSignal) {
+      continue;
+    }
+
+    const urls =
+      decoded.match(
+        /https?:\/\/[^\s<>"']+/gi
+      ) || [];
+
+    for (
+      const rawUrl of urls
+    ) {
+      const cleanedUrl =
+        rawUrl
+          .replace(
+            /[)\]}>.,!?]+$/g,
+            ""
+          )
+          .trim();
+
+      if (
+        !isUsableFacebookCommentRecipeUrl(
+          cleanedUrl
+        )
+      ) {
+        continue;
+      }
+
+      let score = 0;
+
+      if (
+        /\bfull\s+recipe\b/i.test(
+          decoded
+        )
+      ) {
+        score += 8;
+      }
+
+      if (
+        /\bcomplete\s+recipe\b/i.test(
+          decoded
+        )
+      ) {
+        score += 7;
+      }
+
+      if (
+        /\brecipe\s+link\b/i.test(
+          decoded
+        )
+      ) {
+        score += 6;
+      }
+
+      if (
+        /\bget\s+the\s+recipe\b/i.test(
+          decoded
+        )
+      ) {
+        score += 6;
+      }
+
+      if (
+        /👇|below|here/i.test(
+          decoded
+        )
+      ) {
+        score += 2;
+      }
+
+      try {
+        const parsed =
+          new URL(
+            cleanedUrl
+          );
+
+        if (
+          /recipe/i.test(
+            parsed.pathname
+          )
+        ) {
+          score += 2;
+        }
+      } catch {
+        // URL was already validated.
+      }
+
+      candidates.push({
+        url:
+          cleanedUrl,
+        score,
+        text:
+          decoded,
+      });
+    }
+  }
+
+  candidates.sort(
+    (a, b) =>
+      b.score -
+      a.score
+  );
+
+  return (
+    candidates[0] || null
+  );
 }
 
 // =====================================================
