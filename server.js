@@ -3399,6 +3399,45 @@ function looksLikeRecipeCaption(text) {
   return hasIngredientSignal && (hasInstructionSignal || hasCookingWords);
 }
 
+function detectsPrivateRecipePrompt(text) {
+  const raw = String(text || "")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  if (!raw) {
+    return false;
+  }
+
+  // Examples:
+  // "Comment Tasty and I'll share the full recipe"
+  // "Reply RECIPE and we'll send you the link"
+  // "Type DINNER below and I'll DM the recipe"
+  //
+  // The trigger word itself can be anything. What matters is
+  // the combination of an engagement request and a promise
+  // to privately send/share the recipe or recipe link.
+  const engagementThenDelivery =
+    /\b(?:comment|reply|type|say|drop|write)\b[\s\S]{0,140}\b(?:send|share|dm|message)\b[\s\S]{0,100}\b(?:full\s+)?(?:recipe|ingredients?|instructions?|details?|link)\b/i.test(
+      raw
+    );
+
+  const deliveryThenEngagement =
+    /\b(?:send|share|dm|message)\b[\s\S]{0,100}\b(?:full\s+)?(?:recipe|ingredients?|instructions?|details?|link)\b[\s\S]{0,140}\b(?:comment|reply|type|say|drop|write)\b/i.test(
+      raw
+    );
+
+  const directMessageGate =
+    /\b(?:dm|message)\s+me\b[\s\S]{0,100}\b(?:full\s+)?(?:recipe|ingredients?|instructions?|details?|link)\b/i.test(
+      raw
+    );
+
+  return (
+    engagementThenDelivery ||
+    deliveryThenEngagement ||
+    directMessageGate
+  );
+}
+
 function parseCaptionAssistTextWithoutAI(text) {
   const normalizedText = String(text || "")
     .replace(/\r/g, "\n")
@@ -3781,6 +3820,40 @@ async function rescueFacebookVideoIfUseful(
   if (result.linkedRecipeUrl) {
     result.debug.facebookVideoFallbackExitReason =
       "linked-recipe-available";
+
+    return result;
+  }
+
+  const privateRecipePromptDetected =
+    detectsPrivateRecipePrompt(
+      [
+        socialCaptionParts.rawCaption,
+        result.debug?.description,
+        result.debug?.originalRecipeName,
+      ]
+        .filter(Boolean)
+        .join("\n")
+    );
+
+  if (privateRecipePromptDetected) {
+    result.needsFinishing = true;
+    result.partialReason =
+      "facebook-private-recipe-message";
+
+    result.reviewWarning =
+      "This creator sends the full recipe privately. Once you receive it, paste the text or upload a screenshot to finish the recipe.";
+
+    result.debug = {
+      ...(result.debug || {}),
+      partialReason:
+        "facebook-private-recipe-message",
+      facebookPrivateRecipePromptDetected:
+        true,
+      facebookVideoFallbackAttempted:
+        false,
+      facebookVideoFallbackExitReason:
+        "private-recipe-prompt-detected",
+    };
 
     return result;
   }
