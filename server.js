@@ -3368,9 +3368,18 @@ function looksLikeRecipeCaption(text) {
 
   if (value.length < 120) return false;
 
+  const hasMeasuredIngredientSignal =
+    /(?:\b\d+(?:\.\d+)?(?:\s+\d+\/\d+)?|\b\d+\/\d+|½|¼|¾)\s*(?:cups?|tbsp|tablespoons?|tsp|teaspoons?|lbs?|pounds?|oz|ounces?|grams?|g\b|kg\b|ml\b|liters?|cloves?)/i.test(
+      raw
+    );
+
   const hasIngredientSignal =
     /ingredients?(?:\s*\([^)]*\))?\s*(?::|~|-|\*|•|·|\d|½|¼|¾)/i.test(
       raw
+    ) ||
+    (
+      /\bingredients?\b/i.test(raw) &&
+      hasMeasuredIngredientSignal
     ) ||
     /what\s+you(?:'|’)?ll\s+need\s*[:~\-]?/i.test(raw) ||
     /what\s+you\s+need\s*[:~\-]?/i.test(raw);
@@ -3524,7 +3533,16 @@ async function rescueSocialCaptionIfUseful(result) {
     );
 
     const rescuedIngredients = Array.isArray(parsed.ingredients)
-      ? parsed.ingredients.map(cleanHtmlEntities).map(cleanText).filter(Boolean)
+      ? parsed.ingredients
+        .map(cleanHtmlEntities)
+        .map(cleanText)
+        .filter(Boolean)
+        .filter(
+          (ingredient) =>
+            !/^[A-Za-z][A-Za-z &'’/-]{1,40}:$/.test(
+              ingredient
+            )
+        )
       : [];
 
     const rescuedInstructions = Array.isArray(parsed.instructions)

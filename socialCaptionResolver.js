@@ -133,7 +133,13 @@ function cleanTitleCandidate(value) {
   let text = cleanCaptionText(value);
 
   text = text
-    .split(/ingredients?\s*[:~\-]|instructions?\s*[:~\-]|directions?\s*[:~\-]|method\s*[:~\-]|steps?\s*[:~\-]|macros?\s*[:~\-]|nutrition\s*[:~\-]|serving ideas/i)[0]
+    .replace(
+      /^\s*[\d,.]+\s*[kmb]?\s+views?\s*[·•|,\-–—]\s*[\d,.]+\s*[kmb]?\s+reactions?\s*[·•|,\-–—]\s*/i,
+      ""
+    )
+    .split(
+      /ingredients?\b(?=[^.!?\n]{0,50}(?:\d|½|¼|¾))|instructions?\s*[:~\-]|directions?\s*[:~\-]|method\s*[:~\-]|steps?\s*[:~\-]|macros?\s*[:~\-]|nutrition\s*[:~\-]|serving ideas/i
+    )[0]
     .replace(/https?:\/\/\S+/gi, " ")
     .replace(/www\.\S+/gi, " ")
     .replace(/#[A-Za-z0-9_-]+/g, " ")
@@ -237,7 +243,13 @@ function extractTitleCandidatesFromCaption(value) {
   if (!caption) return [];
 
   const beforeSections = caption
-    .split(/ingredients?\s*[:~\-]|instructions?\s*[:~\-]|directions?\s*[:~\-]|method\s*[:~\-]|steps?\s*[:~\-]|macros?\s*[:~\-]|nutrition\s*[:~\-]|serving ideas/i)[0]
+    .replace(
+      /^\s*[\d,.]+\s*[kmb]?\s+views?\s*[·•|,\-–—]\s*[\d,.]+\s*[kmb]?\s+reactions?\s*[·•|,\-–—]\s*/i,
+      ""
+    )
+    .split(
+      /ingredients?\b(?=[^.!?\n]{0,50}(?:\d|½|¼|¾))|instructions?\s*[:~\-]|directions?\s*[:~\-]|method\s*[:~\-]|steps?\s*[:~\-]|macros?\s*[:~\-]|nutrition\s*[:~\-]|serving ideas/i
+    )[0]
     .trim();
 
   const explicitRecipeTitle =
