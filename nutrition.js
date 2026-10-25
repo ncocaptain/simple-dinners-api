@@ -4910,6 +4910,24 @@ function confidenceForAnalysis(
   return "low";
 }
 
+function prepareNutritionIngredientText(
+  ingredients,
+) {
+  return String(ingredients || "")
+    .replace(/\r/g, "")
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .filter(
+      (line) =>
+        !(
+          line.endsWith(":") &&
+          !/\d/.test(line)
+        ),
+    )
+    .join("\n");
+}
+
 async function parseIngredientsWithAI({
   openai,
   model,
@@ -4931,7 +4949,9 @@ IMPORTANT:
 - Preserve the meaning of the original ingredient.
 - Convert clear fractions to decimals.
 - If an ingredient gives a package size, preserve it separately.
-- "2 (14.5 oz) cans diced tomatoes" should become quantity 2, unit "can", packageSizeQuantity 14.5, packageSizeUnit "oz".
+- Simple Dinners' canonical container format is "2 cans (14.5 oz) diced tomatoes". Parse that as quantity 2, unit "can", packageSizeQuantity 14.5, packageSizeUnit "oz".
+- Legacy wording such as "2 (14.5 oz) cans diced tomatoes" means the same thing and should be parsed identically.
+- Section headers are not ingredients and should never appear in the returned ingredient array.
 - For countable foods, use the count description as the unit when useful: "2 large eggs" -> quantity 2, unit "large", food "egg".
 - If a brand is explicitly stated, place it in brand.
 - If an ingredient offers alternatives with "or", use the first-listed food for nutrition matching while preserving the complete original text. Example: "4 slices American or Cheddar cheese" -> food "American cheese".
@@ -4962,7 +4982,9 @@ Recipe:
 ${recipeName || "Untitled recipe"}
 
 Ingredients:
-${ingredients}
+${prepareNutritionIngredientText(
+  ingredients,
+)}
   `.trim();
 
   const response =
